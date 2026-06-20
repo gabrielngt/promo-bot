@@ -10,10 +10,11 @@ def _format_message(product: dict, drop_pct: float) -> str:
     price_fmt = f"R$ {product['price']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     original_fmt = f"R$ {product['original_price']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
+    title = product['title'][:200]  # caption do Telegram tem limite de 1024 chars
     return (
         f"🔥 <b>PROMOÇÃO ALIEXPRESS</b>\n\n"
-        f"<b>{product['title']}</b>\n\n"
-        f"~~{original_fmt}~~\n"
+        f"<b>{title}</b>\n\n"
+        f"<s>{original_fmt}</s>\n"
         f"✅ <b>{price_fmt}</b>  (-{drop_pct:.0f}%)\n\n"
         f"{stars} {product['rating']:.1f}/5  |  📦 {sales_fmt} vendidos\n\n"
         f"👉 <a href=\"{product['link']}\">Comprar no AliExpress</a>"

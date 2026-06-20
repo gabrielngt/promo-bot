@@ -5,6 +5,9 @@ from telegram_bot import post_product
 
 import time
 
+# no cold start, exige desconto maior pois não temos histórico próprio de preços
+COLD_START_DISCOUNT_THRESHOLD = 30.0
+
 
 def check_category(category_id: str) -> int:
     """Checks one category and posts deals. Returns number of posts made."""
@@ -19,7 +22,17 @@ def check_category(category_id: str) -> int:
         state = upsert_product(product["product_id"], product["title"], product["price"])
 
         if state["is_new"]:
-            # produto novo: só salva, aguarda histórico para comparar
+            # cold start: usa o desconto reportado pela própria API como proxy
+            if product["discount_pct"] >= COLD_START_DISCOUNT_THRESHOLD and can_post(product["product_id"]):
+                print(
+                    f"[Monitor] Cold start deal: {product['title'][:50]} "
+                    f"| -{product['discount_pct']:.0f}% | R$ {product['price']:.2f}"
+                )
+                success = post_product(product, product["discount_pct"])
+                if success:
+                    mark_posted(product["product_id"])
+                    posts_made += 1
+                    time.sleep(2)
             continue
 
         min_price = state["min_price"]

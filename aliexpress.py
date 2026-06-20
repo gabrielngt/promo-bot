@@ -6,6 +6,29 @@ from config import ALIEXPRESS_APP_KEY, ALIEXPRESS_APP_SECRET, ALIEXPRESS_TRACKIN
 API_URL = "https://api-sg.aliexpress.com/sync"
 
 
+def _parse_price(value) -> float:
+    """Converts API price string to float. Handles '99.90', '99.90 BRL', '1,299.90'."""
+    import re
+    s = str(value).strip()
+    # extrai só dígitos, ponto e vírgula
+    match = re.search(r"[\d,\.]+", s)
+    if not match:
+        return 0.0
+    num = match.group()
+    # se tiver tanto ponto quanto vírgula, o último separador é o decimal
+    if "," in num and "." in num:
+        if num.rindex(",") > num.rindex("."):
+            num = num.replace(".", "").replace(",", ".")  # formato BR: 1.299,90
+        else:
+            num = num.replace(",", "")  # formato US: 1,299.90
+    else:
+        num = num.replace(",", ".")
+    try:
+        return float(num)
+    except ValueError:
+        return 0.0
+
+
 def _sign(params: dict) -> str:
     sorted_pairs = sorted(params.items())
     concat = "".join(f"{k}{v}" for k, v in sorted_pairs)
@@ -61,11 +84,10 @@ def parse_product(raw: dict) -> dict | None:
     try:
         product_id = str(raw["product_id"])
         title = raw.get("product_title", "")
-        # target_sale_price vem no formato "R$ 99.90" ou "99.90 BRL" dependendo da resposta
         price_str = raw.get("target_sale_price") or raw.get("sale_price") or "0"
-        price = float(str(price_str).replace(",", ".").split()[0])
+        price = _parse_price(price_str)
         original_str = raw.get("target_original_price") or raw.get("original_price") or price_str
-        original_price = float(str(original_str).replace(",", ".").split()[0])
+        original_price = _parse_price(original_str)
         discount = raw.get("discount", "0%").replace("%", "")
         promotion_link = raw.get("promotion_link") or raw.get("product_detail_url", "")
         image_url = raw.get("product_main_image_url", "")

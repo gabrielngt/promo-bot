@@ -2,19 +2,25 @@ import schedule
 import time
 import sys
 
-from config import CHECK_INTERVAL_MINUTES, TELEGRAM_CHANNEL_ID, ALIEXPRESS_APP_KEY
+from config import (
+    CHECK_INTERVAL_MINUTES, TELEGRAM_CHANNEL_ID,
+    ALIEXPRESS_APP_KEY, ALIEXPRESS_APP_SECRET, ALIEXPRESS_TRACKING_ID,
+)
 from database import init_db
 from monitor import run_check
 from telegram_bot import test_connection
 
+_PLACEHOLDER = "PREENCHER_DEPOIS"
+
 
 def validate_config():
-    missing = []
-    if not TELEGRAM_CHANNEL_ID or TELEGRAM_CHANNEL_ID == "PREENCHER_DEPOIS":
-        missing.append("TELEGRAM_CHANNEL_ID")
-    if not ALIEXPRESS_APP_KEY or ALIEXPRESS_APP_KEY == "PREENCHER_DEPOIS":
-        missing.append("ALIEXPRESS_APP_KEY")
-    return missing
+    checks = {
+        "TELEGRAM_CHANNEL_ID": TELEGRAM_CHANNEL_ID,
+        "ALIEXPRESS_APP_KEY": ALIEXPRESS_APP_KEY,
+        "ALIEXPRESS_APP_SECRET": ALIEXPRESS_APP_SECRET,
+        "ALIEXPRESS_TRACKING_ID": ALIEXPRESS_TRACKING_ID,
+    }
+    return [k for k, v in checks.items() if not v or v == _PLACEHOLDER]
 
 
 def main():

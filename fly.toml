@@ -1,0 +1,31 @@
+app = "promo-bot-aliexpress"
+primary_region = "gru"  # São Paulo
+
+[build]
+
+[env]
+  CHECK_INTERVAL_MINUTES = "60"
+  PRICE_DROP_THRESHOLD = "0.15"
+  MIN_REPOST_DAYS = "3"
+
+# Secrets (nunca comitar valores reais):
+# fly secrets set TELEGRAM_BOT_TOKEN=xxx
+# fly secrets set TELEGRAM_CHANNEL_ID=@seucanal
+# fly secrets set ALIEXPRESS_APP_KEY=xxx
+# fly secrets set ALIEXPRESS_APP_SECRET=xxx
+# fly secrets set ALIEXPRESS_TRACKING_ID=xxx
+
+[[mounts]]
+  source = "promo_bot_data"
+  destination = "/app"  # o sqlite vai persistir aqui
+
+[http_service]
+  # bot não serve HTTP — desabilita health check de porta
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1
