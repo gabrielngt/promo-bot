@@ -1,0 +1,87 @@
+import hashlib
+import time
+import requests
+from config import ALIEXPRESS_APP_KEY, ALIEXPRESS_APP_SECRET, ALIEXPRESS_TRACKING_ID
+
+API_URL = "https://api-sg.aliexpress.com/sync"
+
+
+def _sign(params: dict) -> str:
+    sorted_pairs = sorted(params.items())
+    concat = "".join(f"{k}{v}" for k, v in sorted_pairs)
+    sign_str = ALIEXPRESS_APP_SECRET + concat + ALIEXPRESS_APP_SECRET
+    return hashlib.md5(sign_str.encode("utf-8")).hexdigest().upper()
+
+
+def _base_params(method: str) -> dict:
+    return {
+        "method": method,
+        "app_key": ALIEXPRESS_APP_KEY,
+        "timestamp": str(int(time.time() * 1000)),
+        "format": "json",
+        "v": "2.0",
+        "sign_method": "md5",
+    }
+
+
+def get_hot_products(category_id: str, page: int = 1, page_size: int = 50) -> list[dict]:
+    """Returns hot/promoted products for a category with affiliate links."""
+    params = _base_params("aliexpress.affiliate.hotproduct.query")
+    params.update({
+        "category_id": category_id,
+        "tracking_id": ALIEXPRESS_TRACKING_ID,
+        "page_no": str(page),
+        "page_size": str(page_size),
+        "target_currency": "BRL",
+        "target_language": "PT",
+        "sort": "LAST_VOLUME_DESC",  # ordena por vendas recentes
+    })
+    params["sign"] = _sign(params)
+
+    try:
+        resp = requests.post(API_URL, data=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        result = (
+            data
+            .get("aliexpress_affiliate_hotproduct_query_response", {})
+            .get("resp_result", {})
+        )
+        if result.get("resp_code") != 200:
+            print(f"[AliExpress] Erro na categoria {category_id}: {result.get('resp_msg')}")
+            return []
+        return result.get("result", {}).get("products", {}).get("product", [])
+    except Exception as e:
+        print(f"[AliExpress] Exceção na categoria {category_id}: {e}")
+        return []
+
+
+def parse_product(raw: dict) -> dict | None:
+    """Normaliza um produto da API para o formato interno."""
+    try:
+        product_id = str(raw["product_id"])
+        title = raw.get("product_title", "")
+        # target_sale_price vem no formato "R$ 99.90" ou "99.90 BRL" dependendo da resposta
+        price_str = raw.get("target_sale_price") or raw.get("sale_price") or "0"
+        price = float(str(price_str).replace(",", ".").split()[0])
+        original_str = raw.get("target_original_price") or raw.get("original_price") or price_str
+        original_price = float(str(original_str).replace(",", ".").split()[0])
+        discount = raw.get("discount", "0%").replace("%", "")
+        promotion_link = raw.get("promotion_link") or raw.get("product_detail_url", "")
+        image_url = raw.get("product_main_image_url", "")
+        rating = raw.get("evaluate_rate", "0%").replace("%", "")
+        sales = raw.get("lastest_volume", 0)
+        return {
+            "product_id": product_id,
+            "title": title,
+            "price": price,
+            "original_price": original_price,
+            "discount_pct": float(discount) if discount else 0.0,
+            "link": promotion_link,
+            "image_url": image_url,
+            "rating": float(rating) / 20 if rating else 0.0,  # converte 0-100 → 0-5
+            "sales": int(sales),
+        }
+    except Exception as e:
+        print(f"[AliExpress] Erro ao parsear produto {raw.get('product_id')}: {e}")
+        return None
