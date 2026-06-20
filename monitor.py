@@ -1,4 +1,4 @@
-from config import CATEGORIES, PRODUCTS_PER_CATEGORY, PRICE_DROP_THRESHOLD
+from config import CATEGORIES, PRODUCTS_PER_CATEGORY, PRICE_DROP_THRESHOLD, PERIPHERAL_KEYWORDS
 from aliexpress import get_hot_products, parse_product
 from database import upsert_product, can_post, mark_posted
 from telegram_bot import post_product
@@ -9,6 +9,11 @@ import time
 COLD_START_DISCOUNT_THRESHOLD = 30.0
 
 
+def _is_peripheral(title: str) -> bool:
+    t = title.lower()
+    return any(kw.lower() in t for kw in PERIPHERAL_KEYWORDS)
+
+
 def check_category(category_id: str) -> int:
     """Checks one category and posts deals. Returns number of posts made."""
     raw_products = get_hot_products(category_id, page_size=PRODUCTS_PER_CATEGORY)
@@ -17,6 +22,9 @@ def check_category(category_id: str) -> int:
     for raw in raw_products:
         product = parse_product(raw)
         if not product:
+            continue
+
+        if not _is_peripheral(product["title"]):
             continue
 
         state = upsert_product(product["product_id"], product["title"], product["price"])
