@@ -1,37 +1,35 @@
-from config import CATEGORIES, PRODUCTS_PER_CATEGORY, PRICE_DROP_THRESHOLD, PERIPHERAL_KEYWORDS
+from config import CATEGORIES, PRODUCTS_PER_CATEGORY
 from aliexpress import get_hot_products, parse_product
-from database import upsert_product, can_post, mark_posted
+from database import upsert_product, can_post, mark_posted, get_settings
 from telegram_bot import post_product
 
 import time
 
-# no cold start, exige desconto maior pois não temos histórico próprio de preços
-COLD_START_DISCOUNT_THRESHOLD = 30.0
 
-
-def _is_peripheral(title: str) -> bool:
+def _is_peripheral(title: str, keywords: list[str]) -> bool:
     t = title.lower()
-    return any(kw.lower() in t for kw in PERIPHERAL_KEYWORDS)
+    return any(kw.lower() in t for kw in keywords)
 
 
-def check_category(category_id: str) -> int:
-    """Checks one category and posts deals. Returns number of posts made."""
+def check_category(category_id: str, settings: dict) -> int:
     raw_products = get_hot_products(category_id, page_size=PRODUCTS_PER_CATEGORY)
     posts_made = 0
+    keywords = settings["peripheral_keywords"]
+    threshold = settings["price_drop_threshold"] * 100
+    cold_threshold = settings["cold_start_threshold"] * 100
 
     for raw in raw_products:
         product = parse_product(raw)
         if not product:
             continue
 
-        if not _is_peripheral(product["title"]):
+        if keywords and not _is_peripheral(product["title"], keywords):
             continue
 
         state = upsert_product(product["product_id"], product["title"], product["price"])
 
         if state["is_new"]:
-            # cold start: usa o desconto reportado pela própria API como proxy
-            if product["discount_pct"] >= COLD_START_DISCOUNT_THRESHOLD and can_post(product["product_id"]):
+            if product["discount_pct"] >= cold_threshold and can_post(product["product_id"]):
                 print(
                     f"[Monitor] Cold start deal: {product['title'][:50]} "
                     f"| -{product['discount_pct']:.0f}% | R$ {product['price']:.2f}"
@@ -49,29 +47,28 @@ def check_category(category_id: str) -> int:
 
         drop_pct = (min_price - product["price"]) / min_price * 100
 
-        if drop_pct >= PRICE_DROP_THRESHOLD * 100:
-            if can_post(product["product_id"]):
-                print(
-                    f"[Monitor] Promoção detectada: {product['title'][:50]} "
-                    f"| -{drop_pct:.1f}% | R$ {product['price']:.2f}"
-                )
-                success = post_product(product, drop_pct)
-                if success:
-                    mark_posted(product["product_id"])
-                    posts_made += 1
-                    time.sleep(2)  # evita flood no Telegram
+        if drop_pct >= threshold and can_post(product["product_id"]):
+            print(
+                f"[Monitor] Promoção detectada: {product['title'][:50]} "
+                f"| -{drop_pct:.1f}% | R$ {product['price']:.2f}"
+            )
+            success = post_product(product, drop_pct)
+            if success:
+                mark_posted(product["product_id"])
+                posts_made += 1
+                time.sleep(2)
 
     return posts_made
 
 
 def run_check():
-    """Runs a full check across all configured categories."""
+    settings = get_settings()
     print(f"[Monitor] Iniciando verificação de {len(CATEGORIES)} categorias...")
     total_posts = 0
     for category_id in CATEGORIES:
         print(f"[Monitor] Verificando categoria {category_id}...")
-        posts = check_category(category_id)
+        posts = check_category(category_id, settings)
         total_posts += posts
-        time.sleep(1)  # respeita rate limit da API
+        time.sleep(1)
     print(f"[Monitor] Verificação concluída. {total_posts} promoções postadas.")
     return total_posts

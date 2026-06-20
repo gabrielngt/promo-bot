@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Promo Bot — Painel</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script>
+    tailwind.config = { darkMode: 'class' }
+  </script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .tab-active { @apply border-b-2 border-indigo-500 text-white; }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-200 min-h-screen font-sans" x-data="app()" x-init="init()" x-cloak>
+
+  <!-- LOGIN -->
+  <div x-show="!loggedIn" class="flex items-center justify-center min-h-screen px-4">
+    <div class="bg-gray-900 rounded-2xl p-8 w-full max-w-sm shadow-2xl border border-gray-800">
+      <h1 class="text-2xl font-bold text-white mb-1">🤖 Promo Bot</h1>
+      <p class="text-gray-400 text-sm mb-6">Painel de administração</p>
+
+      <label class="block text-sm text-gray-400 mb-1">URL da API (Fly.io)</label>
+      <input x-model="apiUrl" type="url"
+        placeholder="https://promo-bot-aliexpress.fly.dev"
+        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white mb-4 focus:outline-none focus:border-indigo-500" />
+
+      <label class="block text-sm text-gray-400 mb-1">API Key (ADMIN_API_KEY)</label>
+      <input x-model="apiKey" type="password"
+        placeholder="sua senha"
+        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white mb-4 focus:outline-none focus:border-indigo-500"
+        @keydown.enter="login()" />
+
+      <p x-show="loginError" class="text-red-400 text-sm mb-3" x-text="loginError"></p>
+
+      <button @click="login()" :disabled="loginLoading"
+        class="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold rounded-lg py-2 text-sm transition">
+        <span x-show="!loginLoading">Entrar</span>
+        <span x-show="loginLoading">Verificando...</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div x-show="loggedIn" class="max-w-5xl mx-auto px-4 py-8">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-8">
+      <div>
+        <h1 class="text-2xl font-bold text-white">🤖 Promo Bot</h1>
+        <p class="text-gray-500 text-sm" x-text="apiUrl"></p>
+      </div>
+      <button @click="logout()" class="text-sm text-gray-500 hover:text-white transition">Sair</button>
+    </div>
+
+    <!-- Tabs -->
+    <div class="flex gap-6 border-b border-gray-800 mb-8">
+      <button @click="tab='products'"
+        :class="tab==='products' ? 'tab-active' : 'text-gray-500 hover:text-white'"
+        class="pb-3 text-sm font-medium transition">
+        Produtos (<span x-text="products.length"></span>)
+      </button>
+      <button @click="tab='add'; addUrl=''; addResult=null"
+        :class="tab==='add' ? 'tab-active' : 'text-gray-500 hover:text-white'"
+        class="pb-3 text-sm font-medium transition">
+        + Adicionar produto
+      </button>
+      <button @click="tab='settings'; loadSettings()"
+        :class="tab==='settings' ? 'tab-active' : 'text-gray-500 hover:text-white'"
+        class="pb-3 text-sm font-medium transition">
+        Configurações
+      </button>
+    </div>
+
+    <!-- TAB: PRODUCTS -->
+    <div x-show="tab==='products'">
+      <div class="flex justify-between items-center mb-4">
+        <p class="text-gray-400 text-sm">Produtos em monitoramento</p>
+        <button @click="loadProducts()" class="text-indigo-400 hover:text-indigo-300 text-sm">↻ Atualizar</button>
+      </div>
+
+      <div x-show="productsLoading" class="text-center py-12 text-gray-500">Carregando...</div>
+
+      <div x-show="!productsLoading && products.length === 0"
+        class="text-center py-12 text-gray-600">
+        Nenhum produto ainda. O bot adiciona automaticamente ao monitorar as categorias.
+      </div>
+
+      <div x-show="!productsLoading && products.length > 0" class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-gray-500 border-b border-gray-800">
+              <th class="pb-3 pr-4 font-medium">Produto</th>
+              <th class="pb-3 pr-4 font-medium text-right">Preço atual</th>
+              <th class="pb-3 pr-4 font-medium text-right">Mínimo</th>
+              <th class="pb-3 pr-4 font-medium text-right">Queda</th>
+              <th class="pb-3 pr-4 font-medium">Últ. verificação</th>
+              <th class="pb-3 font-medium">Ação</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="p in products" :key="p.product_id">
+              <tr class="border-b border-gray-900 hover:bg-gray-900 transition">
+                <td class="py-3 pr-4 max-w-xs">
+                  <p class="text-white truncate" x-text="p.title"></p>
+                  <p class="text-gray-600 text-xs" x-text="p.product_id"></p>
+                </td>
+                <td class="py-3 pr-4 text-right text-white font-mono" x-text="'R$ ' + (p.last_price||0).toFixed(2).replace('.',',')"></td>
+                <td class="py-3 pr-4 text-right text-gray-400 font-mono" x-text="'R$ ' + (p.min_price||0).toFixed(2).replace('.',',')"></td>
+                <td class="py-3 pr-4 text-right">
+                  <span :class="p.drop_pct > 0 ? 'text-red-400' : 'text-gray-600'"
+                    x-text="p.drop_pct > 0 ? '-' + p.drop_pct.toFixed(1) + '%' : '—'"></span>
+                </td>
+                <td class="py-3 pr-4 text-gray-500 text-xs" x-text="formatDate(p.last_checked)"></td>
+                <td class="py-3">
+                  <button @click="removeProduct(p.product_id)"
+                    class="text-red-500 hover:text-red-400 text-xs transition">Remover</button>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TAB: ADD PRODUCT -->
+    <div x-show="tab==='add'" class="max-w-lg">
+      <p class="text-gray-400 text-sm mb-6">
+        Cole a URL de um produto do AliExpress ou o ID numérico para adicioná-lo ao monitoramento.
+      </p>
+
+      <label class="block text-sm text-gray-400 mb-1">URL ou ID do produto</label>
+      <input x-model="addUrl" type="text"
+        placeholder="https://www.aliexpress.com/item/1005006789012345.html"
+        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white mb-4 focus:outline-none focus:border-indigo-500"
+        @keydown.enter="addProduct()" />
+
+      <button @click="addProduct()" :disabled="addLoading || !addUrl.trim()"
+        class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold rounded-lg px-6 py-2 text-sm transition">
+        <span x-show="!addLoading">Adicionar</span>
+        <span x-show="addLoading">Buscando...</span>
+      </button>
+
+      <!-- resultado -->
+      <div x-show="addResult" class="mt-6 p-4 rounded-xl border"
+        :class="addResult?.ok ? 'bg-green-950 border-green-800' : 'bg-red-950 border-red-800'">
+        <p class="font-semibold text-sm" :class="addResult?.ok ? 'text-green-400' : 'text-red-400'"
+          x-text="addResult?.ok ? '✅ Produto adicionado!' : '❌ ' + addResult?.error"></p>
+        <template x-if="addResult?.ok && addResult?.product">
+          <div class="mt-2 text-sm text-gray-300">
+            <p x-text="addResult.product.title"></p>
+            <p class="text-gray-400 mt-1">
+              R$ <span x-text="(addResult.product.price||0).toFixed(2).replace('.',',')"></span>
+            </p>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- TAB: SETTINGS -->
+    <div x-show="tab==='settings'" class="max-w-lg">
+      <div x-show="settingsLoading" class="text-gray-500 text-sm py-8">Carregando...</div>
+
+      <div x-show="!settingsLoading">
+        <div class="space-y-6">
+
+          <div>
+            <label class="block text-sm font-medium text-white mb-1">
+              Queda mínima para postar (%)
+            </label>
+            <p class="text-gray-500 text-xs mb-2">Posta quando o preço cair X% abaixo do mínimo histórico</p>
+            <input x-model.number="settings.price_drop_threshold_pct" type="number" min="1" max="90" step="1"
+              class="w-32 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
+            <span class="text-gray-500 text-sm ml-2">%</span>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-white mb-1">
+              Desconto mínimo (produtos novos) (%)
+            </label>
+            <p class="text-gray-500 text-xs mb-2">Na primeira detecção, posta se o desconto da API for maior que X%</p>
+            <input x-model.number="settings.cold_start_threshold_pct" type="number" min="1" max="90" step="1"
+              class="w-32 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
+            <span class="text-gray-500 text-sm ml-2">%</span>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-white mb-1">
+              Intervalo de verificação (minutos)
+            </label>
+            <input x-model.number="settings.check_interval_minutes" type="number" min="10" max="1440" step="10"
+              class="w-32 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
+            <span class="text-gray-500 text-sm ml-2">min</span>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-white mb-1">
+              Dias mínimos entre reposts
+            </label>
+            <p class="text-gray-500 text-xs mb-2">Evita postar o mesmo produto com frequência</p>
+            <input x-model.number="settings.min_repost_days" type="number" min="1" max="30" step="1"
+              class="w-32 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
+            <span class="text-gray-500 text-sm ml-2">dias</span>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-white mb-1">
+              Palavras-chave de periféricos
+            </label>
+            <p class="text-gray-500 text-xs mb-2">Uma por linha, em PT/EN/ZH. Produto é bloqueado se nenhuma palavra bater no título.</p>
+            <textarea x-model="settings.keywords_text" rows="10"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-indigo-500 resize-y"></textarea>
+          </div>
+
+        </div>
+
+        <div class="mt-6 flex items-center gap-4">
+          <button @click="saveSettings()" :disabled="settingsSaving"
+            class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold rounded-lg px-6 py-2 text-sm transition">
+            <span x-show="!settingsSaving">Salvar configurações</span>
+            <span x-show="settingsSaving">Salvando...</span>
+          </button>
+          <p x-show="settingsSaved" class="text-green-400 text-sm">✅ Salvo!</p>
+          <p x-show="settingsError" class="text-red-400 text-sm" x-text="settingsError"></p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+function app() {
+  return {
+    // auth
+    loggedIn: false,
+    apiUrl: localStorage.getItem('apiUrl') || '',
+    apiKey: localStorage.getItem('apiKey') || '',
+    loginError: '',
+    loginLoading: false,
+
+    // tabs
+    tab: 'products',
+
+    // products
+    products: [],
+    productsLoading: false,
+
+    // add
+    addUrl: '',
+    addLoading: false,
+    addResult: null,
+
+    // settings
+    settings: {},
+    settingsLoading: false,
+    settingsSaving: false,
+    settingsSaved: false,
+    settingsError: '',
+
+    async init() {
+      if (this.apiUrl && this.apiKey) {
+        const ok = await this.checkAuth();
+        if (ok) {
+          this.loggedIn = true;
+          this.loadProducts();
+        }
+      }
+    },
+
+    async fetch(path, opts = {}) {
+      const res = await fetch(this.apiUrl + path, {
+        ...opts,
+        headers: {
+          'X-API-Key': this.apiKey,
+          'Content-Type': 'application/json',
+          ...(opts.headers || {}),
+        },
+      });
+      return res;
+    },
+
+    async checkAuth() {
+      try {
+        const res = await this.fetch('/api/health');
+        return res.ok;
+      } catch { return false; }
+    },
+
+    async login() {
+      this.loginError = '';
+      this.loginLoading = true;
+      try {
+        const ok = await this.checkAuth();
+        if (ok) {
+          localStorage.setItem('apiUrl', this.apiUrl);
+          localStorage.setItem('apiKey', this.apiKey);
+          this.loggedIn = true;
+          this.loadProducts();
+        } else {
+          this.loginError = 'API Key inválida ou URL incorreta.';
+        }
+      } catch {
+        this.loginError = 'Não foi possível conectar. Verifique a URL.';
+      }
+      this.loginLoading = false;
+    },
+
+    logout() {
+      localStorage.removeItem('apiUrl');
+      localStorage.removeItem('apiKey');
+      this.loggedIn = false;
+      this.apiKey = '';
+    },
+
+    async loadProducts() {
+      this.productsLoading = true;
+      try {
+        const res = await this.fetch('/api/products');
+        this.products = await res.json();
+      } catch { }
+      this.productsLoading = false;
+    },
+
+    async removeProduct(id) {
+      if (!confirm('Remover este produto do monitoramento?')) return;
+      await this.fetch('/api/products/' + id, { method: 'DELETE' });
+      this.products = this.products.filter(p => p.product_id !== id);
+    },
+
+    async addProduct() {
+      this.addLoading = true;
+      this.addResult = null;
+      try {
+        const res = await this.fetch('/api/products', {
+          method: 'POST',
+          body: JSON.stringify({ url_or_id: this.addUrl }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          this.addResult = { ok: true, product: data.product };
+          this.loadProducts();
+        } else {
+          this.addResult = { ok: false, error: data.detail || 'Erro desconhecido' };
+        }
+      } catch {
+        this.addResult = { ok: false, error: 'Falha de conexão' };
+      }
+      this.addLoading = false;
+    },
+
+    async loadSettings() {
+      this.settingsLoading = true;
+      this.settingsSaved = false;
+      this.settingsError = '';
+      try {
+        const res = await this.fetch('/api/settings');
+        const s = await res.json();
+        this.settings = {
+          price_drop_threshold_pct: Math.round(s.price_drop_threshold * 100),
+          cold_start_threshold_pct: Math.round(s.cold_start_threshold * 100),
+          check_interval_minutes: s.check_interval_minutes,
+          min_repost_days: s.min_repost_days,
+          keywords_text: (s.peripheral_keywords || []).join('\n'),
+        };
+      } catch { }
+      this.settingsLoading = false;
+    },
+
+    async saveSettings() {
+      this.settingsSaving = true;
+      this.settingsSaved = false;
+      this.settingsError = '';
+      try {
+        const res = await this.fetch('/api/settings', {
+          method: 'PUT',
+          body: JSON.stringify({
+            price_drop_threshold: this.settings.price_drop_threshold_pct / 100,
+            cold_start_threshold: this.settings.cold_start_threshold_pct / 100,
+            check_interval_minutes: this.settings.check_interval_minutes,
+            min_repost_days: this.settings.min_repost_days,
+            peripheral_keywords: this.settings.keywords_text
+              .split('\n')
+              .map(k => k.trim())
+              .filter(k => k),
+          }),
+        });
+        if (res.ok) {
+          this.settingsSaved = true;
+          setTimeout(() => this.settingsSaved = false, 3000);
+        } else {
+          this.settingsError = 'Erro ao salvar.';
+        }
+      } catch {
+        this.settingsError = 'Falha de conexão.';
+      }
+      this.settingsSaving = false;
+    },
+
+    formatDate(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso + 'Z');
+      return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    },
+  }
+}
+</script>
+</body>
+</html>

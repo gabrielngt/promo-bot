@@ -79,6 +79,55 @@ def get_hot_products(category_id: str, page: int = 1, page_size: int = 50) -> li
         return []
 
 
+def extract_product_id(url_or_id: str) -> str | None:
+    """Extracts AliExpress product ID from a URL or returns the ID directly."""
+    import re
+    s = url_or_id.strip()
+    # já é um ID numérico
+    if re.fullmatch(r"\d+", s):
+        return s
+    # URL padrão: /item/1005006789012345.html
+    match = re.search(r"/item/(\d+)", s)
+    if match:
+        return match.group(1)
+    # URL mobile: /i/1005006789012345.html
+    match = re.search(r"/i/(\d+)", s)
+    if match:
+        return match.group(1)
+    return None
+
+
+def get_product_detail(product_id: str) -> dict | None:
+    """Fetches a single product by ID from AliExpress Portals API."""
+    params = _base_params("aliexpress.affiliate.product.detail.get")
+    params.update({
+        "product_ids": product_id,
+        "tracking_id": ALIEXPRESS_TRACKING_ID,
+        "target_currency": "BRL",
+        "target_language": "PT",
+    })
+    params["sign"] = _sign(params)
+
+    try:
+        resp = requests.post(API_URL, data=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        result = (
+            data
+            .get("aliexpress_affiliate_product_detail_get_response", {})
+            .get("resp_result", {})
+        )
+        if result.get("resp_code") != 200:
+            return None
+        products = result.get("result", {}).get("products", {}).get("product", [])
+        if not products:
+            return None
+        return parse_product(products[0])
+    except Exception as e:
+        print(f"[AliExpress] Erro ao buscar produto {product_id}: {e}")
+        return None
+
+
 def parse_product(raw: dict) -> dict | None:
     """Normaliza um produto da API para o formato interno."""
     try:

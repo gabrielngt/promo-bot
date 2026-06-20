@@ -8,22 +8,31 @@ primary_region = "gru"  # São Paulo
   PRICE_DROP_THRESHOLD = "0.15"
   MIN_REPOST_DAYS = "3"
 
-# Secrets (nunca comitar valores reais):
+# Secrets (nunca comitar valores reais — use: fly secrets set KEY=value):
 # fly secrets set TELEGRAM_BOT_TOKEN=xxx
 # fly secrets set TELEGRAM_CHANNEL_ID=@seucanal
 # fly secrets set ALIEXPRESS_APP_KEY=xxx
 # fly secrets set ALIEXPRESS_APP_SECRET=xxx
 # fly secrets set ALIEXPRESS_TRACKING_ID=xxx
+# fly secrets set ADMIN_API_KEY=sua_senha_aqui
 
 [[mounts]]
   source = "promo_bot_data"
-  destination = "/app"  # o sqlite vai persistir aqui
+  destination = "/app/data"
 
 [http_service]
-  # bot não serve HTTP — desabilita health check de porta
+  internal_port = 8080
+  force_https = true
   auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/api/health"
+    timeout = "5s"
 
 [[vm]]
   memory = "256mb"

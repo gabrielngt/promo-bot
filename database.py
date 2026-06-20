@@ -1,8 +1,15 @@
 import sqlite3
 from datetime import datetime, timedelta
-from config import MIN_REPOST_DAYS
 
 DB_PATH = "promo_bot.db"
+
+_DEFAULTS = {
+    "price_drop_threshold": "0.15",
+    "cold_start_threshold": "0.30",
+    "check_interval_minutes": "60",
+    "min_repost_days": "3",
+    "peripheral_keywords": "",  # populated from config on first init
+}
 
 
 def get_connection():
@@ -11,7 +18,7 @@ def get_connection():
     return conn
 
 
-def init_db():
+def init_db(keyword_defaults: list[str] | None = None):
     with get_connection() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS products (
@@ -29,16 +36,53 @@ def init_db():
                 price       REAL,
                 checked_at  TEXT
             );
-        """)
 
+            CREATE TABLE IF NOT EXISTS settings (
+                key     TEXT PRIMARY KEY,
+                value   TEXT
+            );
+        """)
+        # insere defaults apenas se ainda não existirem
+        defaults = dict(_DEFAULTS)
+        if keyword_defaults:
+            defaults["peripheral_keywords"] = "\n".join(keyword_defaults)
+        for k, v in defaults.items():
+            conn.execute(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v)
+            )
+
+
+# ---------- Settings ----------
+
+def get_settings() -> dict:
+    with get_connection() as conn:
+        rows = conn.execute("SELECT key, value FROM settings").fetchall()
+    s = {r["key"]: r["value"] for r in rows}
+    # converte tipos
+    return {
+        "price_drop_threshold": float(s.get("price_drop_threshold", 0.15)),
+        "cold_start_threshold": float(s.get("cold_start_threshold", 0.30)),
+        "check_interval_minutes": int(s.get("check_interval_minutes", 60)),
+        "min_repost_days": int(s.get("min_repost_days", 3)),
+        "peripheral_keywords": [
+            kw.strip() for kw in s.get("peripheral_keywords", "").splitlines() if kw.strip()
+        ],
+    }
+
+
+def update_settings(data: dict):
+    with get_connection() as conn:
+        for k, v in data.items():
+            if k == "peripheral_keywords" and isinstance(v, list):
+                v = "\n".join(v)
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (k, str(v))
+            )
+
+
+# ---------- Products ----------
 
 def upsert_product(product_id: str, title: str, price: float) -> dict:
-    """
-    Inserts or updates a product. Returns a dict with:
-      - is_new: bool
-      - min_price: float (historical minimum before this update)
-      - last_price: float
-    """
     now = datetime.utcnow().isoformat()
     with get_connection() as conn:
         row = conn.execute(
@@ -69,7 +113,7 @@ def upsert_product(product_id: str, title: str, price: float) -> dict:
 
 
 def can_post(product_id: str) -> bool:
-    """Returns True if the product hasn't been posted recently."""
+    settings = get_settings()
     with get_connection() as conn:
         row = conn.execute(
             "SELECT posted_at FROM products WHERE product_id = ?", (product_id,)
@@ -77,7 +121,7 @@ def can_post(product_id: str) -> bool:
         if not row or not row["posted_at"]:
             return True
         posted_at = datetime.fromisoformat(row["posted_at"])
-        return datetime.utcnow() - posted_at > timedelta(days=MIN_REPOST_DAYS)
+        return datetime.utcnow() - posted_at > timedelta(days=settings["min_repost_days"])
 
 
 def mark_posted(product_id: str):
@@ -86,3 +130,28 @@ def mark_posted(product_id: str):
         conn.execute(
             "UPDATE products SET posted_at=? WHERE product_id=?", (now, product_id)
         )
+
+
+def get_all_products() -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT product_id, title, min_price, last_price, last_checked, posted_at "
+            "FROM products ORDER BY last_checked DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_product(product_id: str) -> bool:
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM products WHERE product_id = ?", (product_id,))
+        conn.execute("DELETE FROM price_history WHERE product_id = ?", (product_id,))
+    return cur.rowcount > 0
+
+
+def get_price_history(product_id: str) -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT price, checked_at FROM price_history WHERE product_id = ? ORDER BY checked_at",
+            (product_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
