@@ -34,6 +34,11 @@ def require_auth(key: str = Security(api_key_header)):
 
 # ---------- Health ----------
 
+@app.get("/ping")
+def ping():
+    return {"status": "ok"}
+
+
 @app.get("/api/health")
 def health(key: str = Security(require_auth)):
     return {"status": "ok"}

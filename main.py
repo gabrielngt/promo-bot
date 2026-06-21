@@ -1,3 +1,4 @@
+import os
 import schedule
 import time
 import sys
@@ -29,7 +30,8 @@ def validate_config():
 
 
 def run_api_server():
-    uvicorn.run(fastapi_app, host="0.0.0.0", port=8080, log_level="warning")
+    port = int(os.getenv("PORT", 8080))
+    uvicorn.run(fastapi_app, host="0.0.0.0", port=port, log_level="warning")
 
 
 def run_scheduler():
@@ -67,7 +69,8 @@ def main():
         sys.exit(1)
     print("✅ Telegram OK")
 
-    print("[Init] Iniciando API web na porta 8080...")
+    port = int(os.getenv("PORT", 8080))
+    print(f"[Init] Iniciando API web na porta {port}...")
     api_thread = threading.Thread(target=run_api_server, daemon=True)
     api_thread.start()
     print("✅ API OK\n")
