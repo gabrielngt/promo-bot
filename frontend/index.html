@@ -1,410 +1,318 @@
 <!DOCTYPE html>
-<html lang="pt-BR" class="dark">
+<html lang="pt-BR">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Promo Bot — Painel</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-  <script>
-    tailwind.config = { darkMode: 'class' }
-  </script>
-  <style>
-    [x-cloak] { display: none !important; }
-    .tab-active { @apply border-b-2 border-indigo-500 text-white; }
-  </style>
-</head>
-<body class="bg-gray-950 text-gray-200 min-h-screen font-sans" x-data="app()" x-init="init()" x-cloak>
-
-  <!-- LOGIN -->
-  <div x-show="!loggedIn" class="flex items-center justify-center min-h-screen px-4">
-    <div class="bg-gray-900 rounded-2xl p-8 w-full max-w-sm shadow-2xl border border-gray-800">
-      <h1 class="text-2xl font-bold text-white mb-1">🤖 Promo Bot</h1>
-      <p class="text-gray-400 text-sm mb-6">Painel de administração</p>
-
-      <label class="block text-sm text-gray-400 mb-1">URL da API (Azure)</label>
-      <input x-model="apiUrl" type="url"
-        placeholder="https://promo-bot-rg-bmbncmgnfbc0eham.westeurope-01.azurewebsites.net"
-        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white mb-4 focus:outline-none focus:border-indigo-500" />
-
-      <label class="block text-sm text-gray-400 mb-1">API Key (ADMIN_API_KEY)</label>
-      <input x-model="apiKey" type="password"
-        placeholder="sua senha"
-        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white mb-4 focus:outline-none focus:border-indigo-500"
-        @keydown.enter="login()" />
-
-      <p x-show="loginError" class="text-red-400 text-sm mb-3" x-text="loginError"></p>
-
-      <button @click="login()" :disabled="loginLoading"
-        class="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold rounded-lg py-2 text-sm transition">
-        <span x-show="!loginLoading">Entrar</span>
-        <span x-show="loginLoading">Verificando...</span>
-      </button>
-    </div>
-  </div>
-
-  <!-- DASHBOARD -->
-  <div x-show="loggedIn" class="max-w-5xl mx-auto px-4 py-8">
-
-    <!-- Header -->
-    <div class="flex items-center justify-between mb-8">
-      <div>
-        <h1 class="text-2xl font-bold text-white">🤖 Promo Bot</h1>
-        <p class="text-gray-500 text-sm" x-text="apiUrl"></p>
-      </div>
-      <button @click="logout()" class="text-sm text-gray-500 hover:text-white transition">Sair</button>
-    </div>
-
-    <!-- Tabs -->
-    <div class="flex gap-6 border-b border-gray-800 mb-8">
-      <button @click="tab='products'"
-        :class="tab==='products' ? 'tab-active' : 'text-gray-500 hover:text-white'"
-        class="pb-3 text-sm font-medium transition">
-        Produtos (<span x-text="products.length"></span>)
-      </button>
-      <button @click="tab='add'; addUrl=''; addResult=null"
-        :class="tab==='add' ? 'tab-active' : 'text-gray-500 hover:text-white'"
-        class="pb-3 text-sm font-medium transition">
-        + Adicionar produto
-      </button>
-      <button @click="tab='settings'; loadSettings()"
-        :class="tab==='settings' ? 'tab-active' : 'text-gray-500 hover:text-white'"
-        class="pb-3 text-sm font-medium transition">
-        Configurações
-      </button>
-    </div>
-
-    <!-- TAB: PRODUCTS -->
-    <div x-show="tab==='products'">
-      <div class="flex justify-between items-center mb-4">
-        <p class="text-gray-400 text-sm">Produtos em monitoramento</p>
-        <button @click="loadProducts()" class="text-indigo-400 hover:text-indigo-300 text-sm">↻ Atualizar</button>
-      </div>
-
-      <div x-show="productsLoading" class="text-center py-12 text-gray-500">Carregando...</div>
-
-      <div x-show="!productsLoading && products.length === 0"
-        class="text-center py-12 text-gray-600">
-        Nenhum produto ainda. O bot adiciona automaticamente ao monitorar as categorias.
-      </div>
-
-      <div x-show="!productsLoading && products.length > 0" class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="text-left text-gray-500 border-b border-gray-800">
-              <th class="pb-3 pr-4 font-medium">Produto</th>
-              <th class="pb-3 pr-4 font-medium text-right">Preço atual</th>
-              <th class="pb-3 pr-4 font-medium text-right">Mínimo</th>
-              <th class="pb-3 pr-4 font-medium text-right">Queda</th>
-              <th class="pb-3 pr-4 font-medium">Últ. verificação</th>
-              <th class="pb-3 font-medium">Ação</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="p in products" :key="p.product_id">
-              <tr class="border-b border-gray-900 hover:bg-gray-900 transition">
-                <td class="py-3 pr-4 max-w-xs">
-                  <p class="text-white truncate" x-text="p.title"></p>
-                  <p class="text-gray-600 text-xs" x-text="p.product_id"></p>
-                </td>
-                <td class="py-3 pr-4 text-right text-white font-mono" x-text="'R$ ' + (p.last_price||0).toFixed(2).replace('.',',')"></td>
-                <td class="py-3 pr-4 text-right text-gray-400 font-mono" x-text="'R$ ' + (p.min_price||0).toFixed(2).replace('.',',')"></td>
-                <td class="py-3 pr-4 text-right">
-                  <span :class="p.drop_pct > 0 ? 'text-red-400' : 'text-gray-600'"
-                    x-text="p.drop_pct > 0 ? '-' + p.drop_pct.toFixed(1) + '%' : '—'"></span>
-                </td>
-                <td class="py-3 pr-4 text-gray-500 text-xs" x-text="formatDate(p.last_checked)"></td>
-                <td class="py-3">
-                  <button @click="removeProduct(p.product_id)"
-                    class="text-red-500 hover:text-red-400 text-xs transition">Remover</button>
-                </td>
-              </tr>
-            </template>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- TAB: ADD PRODUCT -->
-    <div x-show="tab==='add'" class="max-w-lg">
-      <p class="text-gray-400 text-sm mb-6">
-        Cole a URL de um produto do AliExpress ou o ID numérico para adicioná-lo ao monitoramento.
-      </p>
-
-      <label class="block text-sm text-gray-400 mb-1">URL ou ID do produto</label>
-      <input x-model="addUrl" type="text"
-        placeholder="https://www.aliexpress.com/item/1005006789012345.html"
-        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white mb-4 focus:outline-none focus:border-indigo-500"
-        @keydown.enter="addProduct()" />
-
-      <button @click="addProduct()" :disabled="addLoading || !addUrl.trim()"
-        class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold rounded-lg px-6 py-2 text-sm transition">
-        <span x-show="!addLoading">Adicionar</span>
-        <span x-show="addLoading">Buscando...</span>
-      </button>
-
-      <!-- resultado -->
-      <div x-show="addResult" class="mt-6 p-4 rounded-xl border"
-        :class="addResult?.ok ? 'bg-green-950 border-green-800' : 'bg-red-950 border-red-800'">
-        <p class="font-semibold text-sm" :class="addResult?.ok ? 'text-green-400' : 'text-red-400'"
-          x-text="addResult?.ok ? '✅ Produto adicionado!' : '❌ ' + addResult?.error"></p>
-        <template x-if="addResult?.ok && addResult?.product">
-          <div class="mt-2 text-sm text-gray-300">
-            <p x-text="addResult.product.title"></p>
-            <p class="text-gray-400 mt-1">
-              R$ <span x-text="(addResult.product.price||0).toFixed(2).replace('.',',')"></span>
-            </p>
-          </div>
-        </template>
-      </div>
-    </div>
-
-    <!-- TAB: SETTINGS -->
-    <div x-show="tab==='settings'" class="max-w-lg">
-      <div x-show="settingsLoading" class="text-gray-500 text-sm py-8">Carregando...</div>
-
-      <div x-show="!settingsLoading">
-        <div class="space-y-6">
-
-          <div>
-            <label class="block text-sm font-medium text-white mb-1">
-              Queda mínima para postar (%)
-            </label>
-            <p class="text-gray-500 text-xs mb-2">Posta quando o preço cair X% abaixo do mínimo histórico</p>
-            <input x-model.number="settings.price_drop_threshold_pct" type="number" min="1" max="90" step="1"
-              class="w-32 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
-            <span class="text-gray-500 text-sm ml-2">%</span>
-          </div>
-
-          <div>
-            <label class="block text-sm font-medium text-white mb-1">
-              Desconto mínimo (produtos novos) (%)
-            </label>
-            <p class="text-gray-500 text-xs mb-2">Na primeira detecção, posta se o desconto da API for maior que X%</p>
-            <input x-model.number="settings.cold_start_threshold_pct" type="number" min="1" max="90" step="1"
-              class="w-32 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
-            <span class="text-gray-500 text-sm ml-2">%</span>
-          </div>
-
-          <div>
-            <label class="block text-sm font-medium text-white mb-1">
-              Intervalo de verificação (minutos)
-            </label>
-            <input x-model.number="settings.check_interval_minutes" type="number" min="10" max="1440" step="10"
-              class="w-32 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
-            <span class="text-gray-500 text-sm ml-2">min</span>
-          </div>
-
-          <div>
-            <label class="block text-sm font-medium text-white mb-1">
-              Dias mínimos entre reposts
-            </label>
-            <p class="text-gray-500 text-xs mb-2">Evita postar o mesmo produto com frequência</p>
-            <input x-model.number="settings.min_repost_days" type="number" min="1" max="30" step="1"
-              class="w-32 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
-            <span class="text-gray-500 text-sm ml-2">dias</span>
-          </div>
-
-          <div>
-            <label class="block text-sm font-medium text-white mb-1">
-              Palavras-chave de periféricos
-            </label>
-            <p class="text-gray-500 text-xs mb-2">Uma por linha, em PT/EN/ZH. Produto é bloqueado se nenhuma palavra bater no título.</p>
-            <textarea x-model="settings.keywords_text" rows="10"
-              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-indigo-500 resize-y"></textarea>
-          </div>
-
-        </div>
-
-        <div class="mt-6 flex items-center gap-4">
-          <button @click="saveSettings()" :disabled="settingsSaving"
-            class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold rounded-lg px-6 py-2 text-sm transition">
-            <span x-show="!settingsSaving">Salvar configurações</span>
-            <span x-show="settingsSaving">Salvando...</span>
-          </button>
-          <p x-show="settingsSaved" class="text-green-400 text-sm">✅ Salvo!</p>
-          <p x-show="settingsError" class="text-red-400 text-sm" x-text="settingsError"></p>
-        </div>
-      </div>
-    </div>
-
-  </div>
-
-<script>
-function app() {
-  return {
-    // auth
-    loggedIn: false,
-    apiUrl: localStorage.getItem('apiUrl') || '',
-    apiKey: localStorage.getItem('apiKey') || '',
-    loginError: '',
-    loginLoading: false,
-
-    // tabs
-    tab: 'products',
-
-    // products
-    products: [],
-    productsLoading: false,
-
-    // add
-    addUrl: '',
-    addLoading: false,
-    addResult: null,
-
-    // settings
-    settings: {},
-    settingsLoading: false,
-    settingsSaving: false,
-    settingsSaved: false,
-    settingsError: '',
-
-    async init() {
-      if (this.apiUrl && this.apiKey) {
-        const ok = await this.checkAuth();
-        if (ok) {
-          this.loggedIn = true;
-          this.loadProducts();
-        }
-      }
-    },
-
-    async fetch(path, opts = {}) {
-      const res = await fetch(this.apiUrl + path, {
-        ...opts,
-        headers: {
-          'X-API-Key': this.apiKey,
-          'Content-Type': 'application/json',
-          ...(opts.headers || {}),
-        },
-      });
-      return res;
-    },
-
-    async checkAuth() {
-      try {
-        const res = await this.fetch('/api/health');
-        return res.ok;
-      } catch { return false; }
-    },
-
-    async login() {
-      this.loginError = '';
-      this.loginLoading = true;
-      try {
-        const ok = await this.checkAuth();
-        if (ok) {
-          localStorage.setItem('apiUrl', this.apiUrl);
-          localStorage.setItem('apiKey', this.apiKey);
-          this.loggedIn = true;
-          this.loadProducts();
-        } else {
-          this.loginError = 'API Key inválida ou URL incorreta.';
-        }
-      } catch {
-        this.loginError = 'Não foi possível conectar. Verifique a URL.';
-      }
-      this.loginLoading = false;
-    },
-
-    logout() {
-      localStorage.removeItem('apiUrl');
-      localStorage.removeItem('apiKey');
-      this.loggedIn = false;
-      this.apiKey = '';
-    },
-
-    async loadProducts() {
-      this.productsLoading = true;
-      try {
-        const res = await this.fetch('/api/products');
-        this.products = await res.json();
-      } catch { }
-      this.productsLoading = false;
-    },
-
-    async removeProduct(id) {
-      if (!confirm('Remover este produto do monitoramento?')) return;
-      await this.fetch('/api/products/' + id, { method: 'DELETE' });
-      this.products = this.products.filter(p => p.product_id !== id);
-    },
-
-    async addProduct() {
-      this.addLoading = true;
-      this.addResult = null;
-      try {
-        const res = await this.fetch('/api/products', {
-          method: 'POST',
-          body: JSON.stringify({ url_or_id: this.addUrl }),
-        });
-        const data = await res.json();
-        if (res.ok) {
-          this.addResult = { ok: true, product: data.product };
-          this.loadProducts();
-        } else {
-          this.addResult = { ok: false, error: data.detail || 'Erro desconhecido' };
-        }
-      } catch {
-        this.addResult = { ok: false, error: 'Falha de conexão' };
-      }
-      this.addLoading = false;
-    },
-
-    async loadSettings() {
-      this.settingsLoading = true;
-      this.settingsSaved = false;
-      this.settingsError = '';
-      try {
-        const res = await this.fetch('/api/settings');
-        const s = await res.json();
-        this.settings = {
-          price_drop_threshold_pct: Math.round(s.price_drop_threshold * 100),
-          cold_start_threshold_pct: Math.round(s.cold_start_threshold * 100),
-          check_interval_minutes: s.check_interval_minutes,
-          min_repost_days: s.min_repost_days,
-          keywords_text: (s.peripheral_keywords || []).join('\n'),
-        };
-      } catch { }
-      this.settingsLoading = false;
-    },
-
-    async saveSettings() {
-      this.settingsSaving = true;
-      this.settingsSaved = false;
-      this.settingsError = '';
-      try {
-        const res = await this.fetch('/api/settings', {
-          method: 'PUT',
-          body: JSON.stringify({
-            price_drop_threshold: this.settings.price_drop_threshold_pct / 100,
-            cold_start_threshold: this.settings.cold_start_threshold_pct / 100,
-            check_interval_minutes: this.settings.check_interval_minutes,
-            min_repost_days: this.settings.min_repost_days,
-            peripheral_keywords: this.settings.keywords_text
-              .split('\n')
-              .map(k => k.trim())
-              .filter(k => k),
-          }),
-        });
-        if (res.ok) {
-          this.settingsSaved = true;
-          setTimeout(() => this.settingsSaved = false, 3000);
-        } else {
-          this.settingsError = 'Erro ao salvar.';
-        }
-      } catch {
-        this.settingsError = 'Falha de conexão.';
-      }
-      this.settingsSaving = false;
-    },
-
-    formatDate(iso) {
-      if (!iso) return '—';
-      const d = new Date(iso + 'Z');
-      return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-    },
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Promo Bot — Painel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;450;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #111827;
+    --bg-elev: #0d131f;
+    --card: #1f2937;
+    --card-2: #232f3f;
+    --border: #2c3a4d;
+    --border-soft: #283546;
+    --accent: #6366f1;
+    --accent-hover: #5457e6;
+    --accent-soft: rgba(99, 102, 241, 0.14);
+    --text: #ffffff;
+    --muted: #9ca3af;
+    --muted-2: #6b7587;
+    --danger: #ef4444;
+    --danger-soft: rgba(239, 68, 68, 0.12);
+    --green: #34d399;
+    --radius: 10px;
+    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 8px 24px -12px rgba(0,0,0,0.6);
+    --font: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --mono: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
   }
-}
-</script>
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    letter-spacing: -0.01em;
+  }
+  #root { min-height: 100%; }
+  ::selection { background: var(--accent-soft); }
+
+  /* Buttons */
+  .btn {
+    font-family: var(--font);
+    font-size: 13.5px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 0 14px;
+    height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    cursor: pointer;
+    transition: background .14s ease, border-color .14s ease, color .14s ease, opacity .14s ease;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-secondary { background: var(--card); color: var(--text); border-color: var(--border); }
+  .btn-secondary:hover { background: var(--card-2); border-color: #38485d; }
+  .btn-secondary:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-ghost-danger {
+    background: transparent; color: var(--muted); border-color: transparent;
+    height: 32px; width: 32px; padding: 0; border-radius: 7px;
+  }
+  .btn-ghost-danger:hover { background: var(--danger-soft); color: var(--danger); }
+
+  /* Inputs */
+  .field-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: 7px;
+    letter-spacing: -0.01em;
+  }
+  .field-hint {
+    font-size: 12.5px;
+    color: var(--muted-2);
+    margin-top: 6px;
+    line-height: 1.45;
+  }
+  .input {
+    width: 100%;
+    height: 40px;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 14px;
+    padding: 0 13px;
+    transition: border-color .14s ease, box-shadow .14s ease;
+    letter-spacing: -0.01em;
+  }
+  .input::placeholder { color: var(--muted-2); }
+  .input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .input.mono { font-family: var(--mono); font-size: 13px; }
+
+  /* Cards */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+
+  /* Login */
+  .login-wrap {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: radial-gradient(900px 500px at 50% -10%, rgba(99,102,241,0.10), transparent 70%), var(--bg);
+  }
+  .login-card { width: 100%; max-width: 380px; padding: 32px 30px 30px; }
+  .login-head { text-align: center; margin-bottom: 26px; }
+  .logo-badge {
+    width: 46px; height: 46px;
+    border-radius: 12px;
+    background: var(--accent);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 16px;
+    box-shadow: 0 6px 18px -6px rgba(99,102,241,0.7);
+  }
+  .login-title { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+  .login-sub { font-size: 13.5px; color: var(--muted); margin-top: 4px; }
+  .login-form { display: flex; flex-direction: column; gap: 16px; }
+  .login-form .btn-primary { height: 40px; margin-top: 4px; }
+
+  /* App shell */
+  .topbar {
+    height: 56px;
+    border-bottom: 1px solid var(--border-soft);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 22px;
+    position: sticky;
+    top: 0;
+    background: rgba(17,24,39,0.82);
+    backdrop-filter: blur(10px);
+    z-index: 20;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .logo-badge { width: 28px; height: 28px; border-radius: 8px; margin: 0; box-shadow: none; }
+  .brand-name { font-weight: 600; font-size: 14.5px; letter-spacing: -0.02em; }
+  .topbar-right { display: flex; align-items: center; gap: 14px; }
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12.5px; color: var(--muted);
+    background: var(--card); border: 1px solid var(--border-soft);
+    padding: 5px 11px; border-radius: 99px;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 99px; background: var(--green); box-shadow: 0 0 0 3px rgba(52,211,153,0.18); }
+  .api-chip { font-family: var(--mono); font-size: 12px; color: var(--muted-2); }
+  .link-btn {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-family: var(--font); font-size: 13px; padding: 6px 8px; border-radius: 6px;
+    transition: color .14s, background .14s; letter-spacing: -0.01em;
+  }
+  .link-btn:hover { color: var(--text); background: var(--card); }
+
+  .tabs {
+    display: flex; gap: 2px; padding: 0 22px;
+    border-bottom: 1px solid var(--border-soft);
+    position: sticky; top: 56px;
+    background: rgba(17,24,39,0.82);
+    backdrop-filter: blur(10px);
+    z-index: 19;
+  }
+  .tab {
+    background: none; border: none; cursor: pointer;
+    font-family: var(--font); font-size: 13.5px; font-weight: 500;
+    color: var(--muted); padding: 13px 14px 14px;
+    position: relative; letter-spacing: -0.01em;
+    transition: color .14s ease;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); }
+  .tab.active::after {
+    content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px;
+    height: 2px; background: var(--accent); border-radius: 2px 2px 0 0;
+  }
+
+  .page { max-width: 1000px; margin: 0 auto; padding: 30px 22px 80px; }
+  .page-head { margin-bottom: 22px; }
+  .page-title { font-size: 19px; font-weight: 600; letter-spacing: -0.02em; }
+  .page-desc { font-size: 13.5px; color: var(--muted); margin-top: 3px; }
+
+  /* Table */
+  .table-card { overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    text-align: left; font-size: 11.5px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--muted-2); padding: 12px 16px;
+    border-bottom: 1px solid var(--border-soft);
+    background: rgba(255,255,255,0.012);
+  }
+  tbody td {
+    padding: 14px 16px; border-bottom: 1px solid var(--border-soft);
+    font-size: 13.5px; vertical-align: middle;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr { transition: background .12s ease; }
+  tbody tr:hover { background: rgba(255,255,255,0.018); }
+  .prod-name { font-weight: 500; color: var(--text); }
+  .prod-id { font-family: var(--mono); font-size: 11.5px; color: var(--muted-2); margin-top: 2px; }
+  .price { font-family: var(--mono); font-size: 13px; }
+  .price-min { color: var(--muted); }
+  .num-col { text-align: right; }
+  .drop-badge {
+    display: inline-flex; align-items: center;
+    font-family: var(--mono); font-size: 12px; font-weight: 500;
+    padding: 3px 8px; border-radius: 6px;
+    background: rgba(52,211,153,0.12); color: var(--green);
+  }
+  .drop-badge.flat { background: var(--card-2); color: var(--muted); }
+  .muted-cell { color: var(--muted); }
+  .actions-col { text-align: right; }
+
+  .empty { padding: 64px 24px; text-align: center; }
+  .empty-icon {
+    width: 46px; height: 46px; border-radius: 12px;
+    background: var(--card-2); border: 1px solid var(--border-soft);
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--muted-2); margin-bottom: 14px;
+  }
+  .empty-title { font-size: 14.5px; font-weight: 500; color: var(--text); }
+  .empty-sub { font-size: 13px; color: var(--muted); margin-top: 5px; }
+
+  .count-pill {
+    font-size: 12px; color: var(--muted); font-family: var(--mono);
+    background: var(--card); border: 1px solid var(--border-soft);
+    padding: 2px 9px; border-radius: 99px; margin-left: 10px; vertical-align: middle;
+  }
+
+  /* Forms */
+  .form-card { padding: 26px; }
+  .add-card { padding: 26px; max-width: 620px; }
+  .settings-grid { display: flex; flex-direction: column; gap: 0; }
+  .setting-row {
+    display: grid; grid-template-columns: 1fr 220px;
+    gap: 24px; padding: 22px 0;
+    border-bottom: 1px solid var(--border-soft);
+    align-items: start;
+  }
+  .setting-row:first-child { padding-top: 0; }
+  .setting-meta .field-label { margin-bottom: 4px; }
+  .setting-control { padding-top: 1px; }
+  .num-input-wrap { position: relative; }
+  .num-suffix {
+    position: absolute; right: 13px; top: 50%; transform: translateY(-50%);
+    font-size: 12.5px; color: var(--muted-2); pointer-events: none;
+    font-family: var(--mono);
+  }
+
+  /* Tags */
+  .tags-box { grid-column: 1 / -1; margin-top: 4px; }
+  .tags-wrap { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: var(--accent-soft); color: #c7c9ff;
+    border: 1px solid rgba(99,102,241,0.3);
+    font-size: 12.5px; font-weight: 500;
+    padding: 5px 7px 5px 11px; border-radius: 7px;
+  }
+  .tag button {
+    background: none; border: none; cursor: pointer; color: #9a9ef0;
+    width: 16px; height: 16px; border-radius: 4px; display: inline-flex;
+    align-items: center; justify-content: center; transition: background .12s, color .12s;
+  }
+  .tag button:hover { background: rgba(99,102,241,0.25); color: #fff; }
+  .tag-add-row { display: flex; gap: 8px; max-width: 380px; }
+  .no-tags { font-size: 12.5px; color: var(--muted-2); margin-bottom: 12px; }
+
+  .form-footer {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 26px; padding-top: 22px; border-top: 1px solid var(--border-soft);
+  }
+  .save-hint { font-size: 12.5px; color: var(--muted-2); }
+  .saved-flash { color: var(--green); }
+
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(8px);
+    background: var(--card); border: 1px solid var(--border);
+    color: var(--text); font-size: 13px; padding: 10px 16px; border-radius: 9px;
+    box-shadow: var(--shadow); display: flex; align-items: center; gap: 9px;
+    opacity: 0; pointer-events: none; transition: opacity .2s ease, transform .2s ease;
+    z-index: 50;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  svg { display: block; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="app.jsx"></script>
 </body>
 </html>
