@@ -1,14 +1,14 @@
 import os
 import schedule
 import time
-import sys
 import threading
 
 import uvicorn
 
 from config import (
-    CHECK_INTERVAL_MINUTES, TELEGRAM_CHANNEL_ID,
+    TELEGRAM_CHANNEL_ID,
     ALIEXPRESS_APP_KEY, ALIEXPRESS_APP_SECRET, ALIEXPRESS_TRACKING_ID, ADMIN_API_KEY,
+    PERIPHERAL_KEYWORDS,
 )
 from database import init_db, get_settings
 from monitor import run_check
@@ -18,63 +18,62 @@ from api import app as fastapi_app
 _PLACEHOLDER = "PREENCHER_DEPOIS"
 
 
-def validate_config():
+def _missing_credentials():
     checks = {
         "TELEGRAM_CHANNEL_ID": TELEGRAM_CHANNEL_ID,
         "ALIEXPRESS_APP_KEY": ALIEXPRESS_APP_KEY,
         "ALIEXPRESS_APP_SECRET": ALIEXPRESS_APP_SECRET,
         "ALIEXPRESS_TRACKING_ID": ALIEXPRESS_TRACKING_ID,
-        "ADMIN_API_KEY": ADMIN_API_KEY,
     }
     return [k for k, v in checks.items() if not v or v == _PLACEHOLDER]
 
 
 def run_api_server():
     port = int(os.getenv("PORT", 8080))
-    uvicorn.run(fastapi_app, host="0.0.0.0", port=port, log_level="warning")
+    print(f"[API] Iniciando na porta {port}...", flush=True)
+    uvicorn.run(fastapi_app, host="0.0.0.0", port=port, log_level="info")
 
 
 def run_scheduler():
     settings = get_settings()
     interval = settings["check_interval_minutes"]
-
+    print(f"[Scheduler] Rodando a cada {interval} minutos.", flush=True)
     run_check()
-
     schedule.every(interval).minutes.do(run_check)
-    print(f"[Scheduler] Rodando a cada {interval} minutos. Ctrl+C para parar.\n")
-
     while True:
         schedule.run_pending()
         time.sleep(30)
 
 
 def main():
-    print("=" * 50)
-    print("  Promo Bot - AliExpress → Telegram")
-    print("=" * 50)
+    print("=" * 50, flush=True)
+    print("  Promo Bot - AliExpress → Telegram", flush=True)
+    print("=" * 50, flush=True)
 
-    missing = validate_config()
-    if missing:
-        print(f"\n⚠️  Credenciais faltando no .env: {', '.join(missing)}")
-        print("Preencha o arquivo .env e tente novamente.\n")
-        sys.exit(1)
-
-    print("\n[Init] Inicializando banco de dados...")
-    from config import PERIPHERAL_KEYWORDS
+    print("[Init] Inicializando banco de dados...", flush=True)
     init_db(keyword_defaults=PERIPHERAL_KEYWORDS)
+    print("[Init] Banco OK", flush=True)
 
-    print("[Init] Testando conexão com o Telegram...")
-    if not test_connection():
-        print("❌ Falha na conexão com o Telegram. Verifique o token e o ID do canal.")
-        sys.exit(1)
-    print("✅ Telegram OK")
-
-    port = int(os.getenv("PORT", 8080))
-    print(f"[Init] Iniciando API web na porta {port}...")
+    # API sempre sobe — painel web fica disponível mesmo sem credenciais do bot
     api_thread = threading.Thread(target=run_api_server, daemon=True)
     api_thread.start()
-    print("✅ API OK\n")
 
+    missing = _missing_credentials()
+    if missing:
+        print(f"[Bot] ⚠️  Credenciais pendentes: {', '.join(missing)}", flush=True)
+        print("[Bot] Scheduler desativado até as credenciais serem configuradas.", flush=True)
+        print("[Bot] API web continua rodando normalmente.", flush=True)
+        # mantém o processo vivo para a API continuar servindo
+        while True:
+            time.sleep(60)
+
+    print("[Bot] Testando conexão com o Telegram...", flush=True)
+    if not test_connection():
+        print("[Bot] ❌ Falha no Telegram. Verifique TELEGRAM_BOT_TOKEN e TELEGRAM_CHANNEL_ID.", flush=True)
+        while True:
+            time.sleep(60)
+
+    print("[Bot] ✅ Telegram OK", flush=True)
     run_scheduler()
 
 
