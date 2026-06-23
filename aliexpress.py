@@ -65,6 +65,9 @@ def get_hot_products(category_id: str, page: int = 1, page_size: int = 50) -> li
         resp = requests.post(API_URL, data=params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
+        if "error_response" in data:
+            print(f"[AliExpress] hotproduct API error: {data['error_response']}")
+            return []
         result = (
             data
             .get("aliexpress_affiliate_hotproduct_query_response", {})
@@ -112,7 +115,9 @@ def get_product_detail(product_id: str) -> dict | None:
         resp = requests.post(API_URL, data=params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
-        print(f"[AliExpress] raw response: {data}")
+        if "error_response" in data:
+            print(f"[AliExpress] product detail API error: {data['error_response']}")
+            return None
         result = (
             data
             .get("aliexpress_affiliate_product_detail_get_response", {})

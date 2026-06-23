@@ -95,8 +95,8 @@ const mapProduct = (p) => ({
   current:    p.last_price ?? 0,
   min:        p.min_price  ?? 0,
   drop_pct:   p.drop_pct   ?? 0,
-  lastPosted: p.last_posted_at
-    ? new Date(p.last_posted_at + "Z").toLocaleDateString("pt-BR")
+  lastPosted: p.posted_at
+    ? new Date(p.posted_at + "Z").toLocaleDateString("pt-BR")
     : "—",
 });
 

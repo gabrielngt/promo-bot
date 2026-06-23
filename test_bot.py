@@ -164,16 +164,17 @@ def test_cold_start_logic():
     state = upsert_product(product["product_id"], product["title"], product["price"])
     assert state["is_new"] is True
 
-    # lógica do monitor: cold start com desconto >= 30% → deve postar
-    from monitor import COLD_START_DISCOUNT_THRESHOLD
-    should_post = state["is_new"] and product["discount_pct"] >= COLD_START_DISCOUNT_THRESHOLD and can_post(product["product_id"])
+    # lógica do monitor: cold start com desconto >= cold_start_threshold (default 30%)
+    from database import get_settings
+    cold_threshold = get_settings()["cold_start_threshold"] * 100
+    should_post = state["is_new"] and product["discount_pct"] >= cold_threshold and can_post(product["product_id"])
     assert should_post is True
     print(f"  ✅ Cold start com {product['discount_pct']}% desconto → posta ✓")
 
     # produto novo com desconto baixo → NÃO deve postar
     product2 = {**product, "product_id": "COLD002", "discount_pct": 10.0}
     state2 = upsert_product(product2["product_id"], product2["title"], product2["price"])
-    should_post2 = state2["is_new"] and product2["discount_pct"] >= COLD_START_DISCOUNT_THRESHOLD
+    should_post2 = state2["is_new"] and product2["discount_pct"] >= cold_threshold
     assert should_post2 is False
     print(f"  ✅ Cold start com {product2['discount_pct']}% desconto → não posta ✓")
 
