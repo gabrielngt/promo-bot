@@ -5,22 +5,54 @@ from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID
 
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
+# Remessa Conforme: 20% Imposto de Importação cobrado pela plataforma no checkout.
+# Aplicado sobre o preço final após cupom e moedas.
+BR_TAX_RATE = 0.20
+
+
+def _brl(amount: float) -> str:
+    return f"R$ {amount:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
 
 def _format_message(product: dict, drop_pct: float) -> str:
     stars = "⭐" * round(product["rating"])
     sales_fmt = f"{product['sales']:,}".replace(",", ".")
-    price_fmt = f"R$ {product['price']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    original_fmt = f"R$ {product['original_price']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-    title = product['title'][:200]  # caption do Telegram tem limite de 1024 chars
-    return (
-        f"🔥 <b>PROMOÇÃO ALIEXPRESS</b>\n\n"
-        f"<b>{title}</b>\n\n"
-        f"<s>{original_fmt}</s>\n"
-        f"✅ <b>{price_fmt}</b>  (-{drop_pct:.0f}%)\n\n"
-        f"{stars} {product['rating']:.1f}/5  |  📦 {sales_fmt} vendidos\n\n"
-        f"👉 <a href=\"{product['link']}\">Comprar no AliExpress</a>"
-    )
+    price = product["price"]
+    original_price = product["original_price"]
+    coupon = product.get("coupon_amount", 0.0)
+    coin = product.get("coin_discount", 0.0)
+
+    price_after_coupon = max(0.0, price - coupon)
+    price_after_coins = max(0.0, price_after_coupon - coin)
+    final_price = price_after_coins * (1 + BR_TAX_RATE)
+
+    title = product["title"][:150]  # caption Telegram: limite 1024 chars
+
+    lines = [
+        "🔥 <b>PROMOÇÃO ALIEXPRESS</b>",
+        "",
+        f"<b>{title}</b>",
+        "",
+        f"<s>{_brl(original_price)}</s>",
+        f"✅ <b>{_brl(price)}</b>  (-{drop_pct:.0f}%)",
+    ]
+
+    if coupon > 0:
+        lines.append(f"🎟 Cupom: -{_brl(coupon)} → <b>{_brl(price_after_coupon)}</b>")
+
+    if coin > 0:
+        lines.append(f"🪙 Moedas: -{_brl(coin)} → <b>{_brl(price_after_coins)}</b>")
+
+    lines += [
+        f"🇧🇷 Est. c/ impostos: <b>{_brl(final_price)}</b>",
+        "",
+        f"{stars} {product['rating']:.1f}/5  |  📦 {sales_fmt} vendidos",
+        "",
+        f'👉 <a href="{product["link"]}">Comprar no AliExpress</a>',
+    ]
+
+    return "\n".join(lines)
 
 
 def post_product(product: dict, drop_pct: float) -> bool:

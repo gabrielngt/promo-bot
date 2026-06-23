@@ -199,12 +199,33 @@ def parse_product(raw: dict) -> dict | None:
         image_url = raw.get("product_main_image_url", "")
         rating = raw.get("evaluate_rate", "0%").replace("%", "")
         sales = raw.get("lastest_volume", 0)
+
+        # Cupom: desconta se preço mínimo for atendido
+        coupon_amount = _parse_price(raw.get("coupon_amount") or "0")
+        coupon_min = _parse_price(raw.get("coupon_min_amount") or "0")
+        coupon_applied = (
+            coupon_amount
+            if coupon_amount > 0 and (coupon_min == 0 or price >= coupon_min)
+            else 0.0
+        )
+
+        # Desconto com moedas — campo varia por versão da API; extrai se disponível.
+        # Nota: o link de compra é o mesmo (moedas são abatidas no checkout pelo saldo da conta).
+        coin_discount = _parse_price(
+            raw.get("coins_discount")
+            or raw.get("ae_item_coins_discount")
+            or raw.get("coin_discount")
+            or "0"
+        )
+
         return {
             "product_id": product_id,
             "title": title,
             "price": price,
             "original_price": original_price,
             "discount_pct": float(discount) if discount else 0.0,
+            "coupon_amount": coupon_applied,
+            "coin_discount": coin_discount,
             "link": promotion_link,
             "image_url": image_url,
             "rating": float(rating) / 20 if rating else 0.0,
