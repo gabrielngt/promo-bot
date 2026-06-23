@@ -48,6 +48,11 @@ def _base_params(method: str) -> dict:
 # ── WORKAROUND (Standard API) ─────────────────────────────────────────────────
 # Remover quando Advanced API for aprovada e descomentar os métodos abaixo.
 
+def get_products_by_brand(brand: str, page_size: int = 50) -> list[dict]:
+    """Busca produtos de uma marca específica como keyword."""
+    return _query_products(keywords=brand, page_size=page_size)
+
+
 def _query_products(keywords: str = "", category_id: str = "", page: int = 1, page_size: int = 50) -> list[dict]:
     """Standard API: aliexpress.affiliate.product.query"""
     params = _base_params("aliexpress.affiliate.product.query")

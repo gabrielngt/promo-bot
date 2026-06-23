@@ -1,5 +1,5 @@
 from config import CATEGORIES, PRODUCTS_PER_CATEGORY
-from aliexpress import get_hot_products, parse_product
+from aliexpress import get_hot_products, get_products_by_brand, parse_product
 from database import upsert_product, can_post, mark_posted, get_settings
 from telegram_bot import post_product
 
@@ -18,8 +18,8 @@ def _matches_brand(title: str, brands: list[str]) -> bool:
     return any(brand.lower() in t for brand in brands)
 
 
-def check_category(category_id: str, settings: dict, posts_so_far: int = 0) -> int:
-    raw_products = get_hot_products(category_id, page_size=PRODUCTS_PER_CATEGORY)
+def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_products_override: list = None) -> int:
+    raw_products = raw_products_override if raw_products_override is not None else get_hot_products(category_id, page_size=PRODUCTS_PER_CATEGORY)
     posts_made = 0
     max_posts = settings["max_posts_per_cycle"] - posts_so_far
     keywords = settings["peripheral_keywords"]
@@ -78,14 +78,38 @@ def check_category(category_id: str, settings: dict, posts_so_far: int = 0) -> i
 
 def run_check():
     settings = get_settings()
-    print(f"[Monitor] Iniciando verificação de {len(CATEGORIES)} categorias...")
+    brands = settings["brand_whitelist"]
     total_posts = 0
+
+    # busca por categoria (sempre)
+    print(f"[Monitor] Verificando {len(CATEGORIES)} categorias...")
     for category_id in CATEGORIES:
         if total_posts >= settings["max_posts_per_cycle"]:
             break
-        print(f"[Monitor] Verificando categoria {category_id}...")
         posts = check_category(category_id, settings, posts_so_far=total_posts)
         total_posts += posts
         time.sleep(1)
+
+    # busca adicional por marca (quando whitelist estiver preenchida)
+    if brands and total_posts < settings["max_posts_per_cycle"]:
+        print(f"[Monitor] Buscando {len(brands)} marca(s) na whitelist...")
+        seen_ids = set()
+        brand_products = []
+        for brand in brands:
+            for raw in get_products_by_brand(brand):
+                pid = str(raw.get("product_id", ""))
+                if pid and pid not in seen_ids:
+                    seen_ids.add(pid)
+                    brand_products.append(raw)
+            time.sleep(1)
+        if brand_products:
+            posts = check_category(
+                category_id="brand_search",
+                settings=settings,
+                posts_so_far=total_posts,
+                raw_products_override=brand_products,
+            )
+            total_posts += posts
+
     print(f"[Monitor] Verificação concluída. {total_posts} promoções postadas.")
     return total_posts
