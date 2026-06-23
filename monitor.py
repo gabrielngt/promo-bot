@@ -18,10 +18,10 @@ def _matches_brand(title: str, brands: list[str]) -> bool:
     return any(brand.lower() in t for brand in brands)
 
 
-def check_category(category_id: str, settings: dict) -> int:
+def check_category(category_id: str, settings: dict, posts_so_far: int = 0) -> int:
     raw_products = get_hot_products(category_id, page_size=PRODUCTS_PER_CATEGORY)
     posts_made = 0
-    max_posts = settings["max_posts_per_cycle"]
+    max_posts = settings["max_posts_per_cycle"] - posts_so_far
     keywords = settings["peripheral_keywords"]
     brands = settings["brand_whitelist"]
     threshold = settings["price_drop_threshold"] * 100
@@ -81,8 +81,10 @@ def run_check():
     print(f"[Monitor] Iniciando verificação de {len(CATEGORIES)} categorias...")
     total_posts = 0
     for category_id in CATEGORIES:
+        if total_posts >= settings["max_posts_per_cycle"]:
+            break
         print(f"[Monitor] Verificando categoria {category_id}...")
-        posts = check_category(category_id, settings)
+        posts = check_category(category_id, settings, posts_so_far=total_posts)
         total_posts += posts
         time.sleep(1)
     print(f"[Monitor] Verificação concluída. {total_posts} promoções postadas.")

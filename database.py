@@ -2,7 +2,14 @@ import os
 import sqlite3
 from datetime import datetime, timedelta
 
-DB_PATH = os.path.join(os.getenv("HOME", ""), "promo_bot.db") if os.getenv("HOME") else "promo_bot.db"
+def _resolve_db_path() -> str:
+    if os.getenv("DB_PATH"):
+        return os.getenv("DB_PATH")
+    if os.path.isdir("/home"):
+        return "/home/promo_bot.db"
+    return "promo_bot.db"
+
+DB_PATH = _resolve_db_path()
 
 _DEFAULTS = {
     "price_drop_threshold": "0.15",
