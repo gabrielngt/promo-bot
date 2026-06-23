@@ -11,10 +11,18 @@ def _is_peripheral(title: str, keywords: list[str]) -> bool:
     return any(kw.lower() in t for kw in keywords)
 
 
+def _matches_brand(title: str, brands: list[str]) -> bool:
+    if not brands:
+        return True
+    t = title.lower()
+    return any(brand.lower() in t for brand in brands)
+
+
 def check_category(category_id: str, settings: dict) -> int:
     raw_products = get_hot_products(category_id, page_size=PRODUCTS_PER_CATEGORY)
     posts_made = 0
     keywords = settings["peripheral_keywords"]
+    brands = settings["brand_whitelist"]
     threshold = settings["price_drop_threshold"] * 100
     cold_threshold = settings["cold_start_threshold"] * 100
 
@@ -24,6 +32,9 @@ def check_category(category_id: str, settings: dict) -> int:
             continue
 
         if keywords and not _is_peripheral(product["title"], keywords):
+            continue
+
+        if not _matches_brand(product["title"], brands):
             continue
 
         state = upsert_product(product["product_id"], product["title"], product["price"])

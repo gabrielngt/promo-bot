@@ -10,6 +10,7 @@ _DEFAULTS = {
     "check_interval_minutes": "60",
     "min_repost_days": "3",
     "peripheral_keywords": "",  # populated from config on first init
+    "brand_whitelist": "",  # vazio = sem filtro de marca
 }
 
 
@@ -68,13 +69,16 @@ def get_settings() -> dict:
         "peripheral_keywords": [
             kw.strip() for kw in s.get("peripheral_keywords", "").splitlines() if kw.strip()
         ],
+        "brand_whitelist": [
+            b.strip() for b in s.get("brand_whitelist", "").splitlines() if b.strip()
+        ],
     }
 
 
 def update_settings(data: dict):
     with get_connection() as conn:
         for k, v in data.items():
-            if k == "peripheral_keywords" and isinstance(v, list):
+            if k in ("peripheral_keywords", "brand_whitelist") and isinstance(v, list):
                 v = "\n".join(v)
             conn.execute(
                 "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (k, str(v))

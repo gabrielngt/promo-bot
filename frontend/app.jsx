@@ -80,12 +80,14 @@ const fromApi = (s) => ({
   interval: s.check_interval_minutes ?? 60,
   minDays:  s.min_repost_days        ?? 7,
   keywords: s.peripheral_keywords    ?? [],
+  brands:   s.brand_whitelist        ?? [],
 });
 const toApi = (s) => ({
   price_drop_threshold:   s.minDrop / 100,
   check_interval_minutes: Number(s.interval),
   min_repost_days:        Number(s.minDays),
   peripheral_keywords:    s.keywords,
+  brand_whitelist:        s.brands,
 });
 
 /* ── Product mapping ── */
@@ -357,6 +359,7 @@ function Configuracoes({ api, showToast }) {
       .catch((err) => showToast("Erro ao carregar configurações: " + err.message, "err"));
   }, [api]);
 
+  const [brandInput, setBrandInput] = useState("");
   const addKeyword = () => {
     const k = kwInput.trim().toLowerCase();
     if (!k || draft.keywords.includes(k)) { setKwInput(""); return; }
@@ -368,6 +371,19 @@ function Configuracoes({ api, showToast }) {
     if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addKeyword(); }
     else if (e.key === "Backspace" && !kwInput && draft.keywords.length) {
       set({ keywords: draft.keywords.slice(0, -1) });
+    }
+  };
+  const addBrand = () => {
+    const b = brandInput.trim();
+    if (!b || draft.brands.map(x => x.toLowerCase()).includes(b.toLowerCase())) { setBrandInput(""); return; }
+    set({ brands: [...draft.brands, b] });
+    setBrandInput("");
+  };
+  const removeBrand = (b) => set({ brands: draft.brands.filter((x) => x !== b) });
+  const onBrandKey = (e) => {
+    if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addBrand(); }
+    else if (e.key === "Backspace" && !brandInput && draft.brands.length) {
+      set({ brands: draft.brands.slice(0, -1) });
     }
   };
 
@@ -411,7 +427,7 @@ function Configuracoes({ api, showToast }) {
             hint="Evita repostar o mesmo produto antes de passar esse período."
             value={draft.minDays} suffix="dias" onChange={(v) => set({ minDays: v })} />
 
-          <div className="setting-row" style={{ gridTemplateColumns: "1fr", borderBottom: "none", paddingBottom: 4 }}>
+          <div className="setting-row" style={{ gridTemplateColumns: "1fr", paddingBottom: 4 }}>
             <div className="setting-meta">
               <label className="field-label">Keywords de periféricos</label>
               <div className="field-hint" style={{ marginTop: 2 }}>Produtos cujo título contém uma destas palavras são monitorados pelo bot.</div>
@@ -433,6 +449,32 @@ function Configuracoes({ api, showToast }) {
                 <input className="input" type="text" placeholder="Digite e pressione Enter"
                   value={kwInput} onChange={(e) => setKwInput(e.target.value)} onKeyDown={onKwKey} />
                 <button type="button" className="btn btn-secondary" onClick={addKeyword}><Icon.plus /> Add</button>
+              </div>
+            </div>
+          </div>
+
+          <div className="setting-row" style={{ gridTemplateColumns: "1fr", borderBottom: "none", paddingBottom: 4 }}>
+            <div className="setting-meta">
+              <label className="field-label">Whitelist de marcas</label>
+              <div className="field-hint" style={{ marginTop: 2 }}>Se preenchido, só posta produtos de marcas listadas aqui. Vazio = aceita qualquer marca.</div>
+            </div>
+            <div className="tags-box">
+              {draft.brands.length > 0 ? (
+                <div className="tags-wrap">
+                  {draft.brands.map((b) => (
+                    <span className="tag" key={b}>
+                      {b}
+                      <button type="button" onClick={() => removeBrand(b)} aria-label={"Remover " + b}><Icon.x /></button>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="no-tags">Vazio — todas as marcas aceitas.</div>
+              )}
+              <div className="tag-add-row">
+                <input className="input" type="text" placeholder="Ex: Logitech, Redragon, HyperX"
+                  value={brandInput} onChange={(e) => setBrandInput(e.target.value)} onKeyDown={onBrandKey} />
+                <button type="button" className="btn btn-secondary" onClick={addBrand}><Icon.plus /> Add</button>
               </div>
             </div>
           </div>
