@@ -87,7 +87,9 @@ const fromApi = (s) => ({
   interval: s.check_interval_minutes ?? 60,
   minDays:  s.min_repost_days        ?? 7,
   keywords: s.peripheral_keywords    ?? [],
-  brands:   (s.brand_whitelist ?? []).map(parseBrandStr),
+  brands:   (s.brand_whitelist ?? []).map(entry =>
+    typeof entry === "string" ? parseBrandStr(entry) : entry
+  ),
 });
 const toApi = (s) => ({
   price_drop_threshold:   s.minDrop / 100,
