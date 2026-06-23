@@ -12,6 +12,11 @@ def _is_peripheral(title: str, keywords: list[str]) -> bool:
     return any(kw.lower() in t for kw in keywords)
 
 
+def _is_blacklisted(title: str, blacklist: list[str]) -> bool:
+    t = title.lower()
+    return any(kw.lower() in t for kw in blacklist)
+
+
 def _matches_brand(title: str, brands: list) -> bool:
     if not brands:
         return True
@@ -46,6 +51,7 @@ def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_
     posts_made = 0
     max_posts = settings["max_posts_per_cycle"] - posts_so_far
     keywords = settings["peripheral_keywords"]
+    blacklist = settings["keyword_blacklist"]
     brands = settings["brand_whitelist"]
     threshold = settings["price_drop_threshold"] * 100
     cold_threshold = settings["cold_start_threshold"] * 100
@@ -53,6 +59,9 @@ def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_
     for product in cheapest.values():
         if posts_made >= max_posts:
             break
+
+        if blacklist and _is_blacklisted(product["title"], blacklist):
+            continue
 
         if keywords and not _is_peripheral(product["title"], keywords):
             continue

@@ -19,6 +19,7 @@ _DEFAULTS = {
     "max_posts_per_cycle": "5",
     "peripheral_keywords": "",  # populated from config on first init
     "brand_whitelist": "",  # vazio = sem filtro de marca
+    "keyword_blacklist": "",  # produtos cujo título contiver qualquer palavra são ignorados
 }
 
 
@@ -99,6 +100,9 @@ def get_settings() -> dict:
             _parse_brand_entry(b)
             for b in s.get("brand_whitelist", "").splitlines()
             if b.strip()
+        ],
+        "keyword_blacklist": [
+            kw.strip() for kw in s.get("keyword_blacklist", "").splitlines() if kw.strip()
         ],
     }
 

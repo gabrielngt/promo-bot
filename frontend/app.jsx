@@ -83,11 +83,12 @@ const serializeBrand = (b) =>
   b.keywords.length > 0 ? `${b.name}:${b.keywords.join(",")}` : b.name;
 
 const fromApi = (s) => ({
-  minDrop:  Math.round((s.price_drop_threshold  ?? 0.15) * 100),
-  interval: s.check_interval_minutes ?? 60,
-  minDays:  s.min_repost_days        ?? 7,
-  keywords: s.peripheral_keywords    ?? [],
-  brands:   (s.brand_whitelist ?? []).map(entry =>
+  minDrop:   Math.round((s.price_drop_threshold  ?? 0.15) * 100),
+  interval:  s.check_interval_minutes ?? 60,
+  minDays:   s.min_repost_days        ?? 7,
+  keywords:  s.peripheral_keywords    ?? [],
+  blacklist: s.keyword_blacklist      ?? [],
+  brands:    (s.brand_whitelist ?? []).map(entry =>
     typeof entry === "string" ? parseBrandStr(entry) : entry
   ),
 });
@@ -96,6 +97,7 @@ const toApi = (s) => ({
   check_interval_minutes: Number(s.interval),
   min_repost_days:        Number(s.minDays),
   peripheral_keywords:    s.keywords,
+  keyword_blacklist:      s.blacklist,
   brand_whitelist:        s.brands.map(serializeBrand),
 });
 
@@ -361,6 +363,7 @@ function NumberSetting({ label, hint, value, suffix, onChange, min = 0 }) {
 function Configuracoes({ api, showToast }) {
   const [draft, setDraft] = useState(null);
   const [kwInput, setKwInput] = useState("");
+  const [blInput, setBlInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
@@ -385,6 +388,20 @@ function Configuracoes({ api, showToast }) {
     if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addKeyword(); }
     else if (e.key === "Backspace" && !kwInput && draft.keywords.length) {
       set({ keywords: draft.keywords.slice(0, -1) });
+    }
+  };
+
+  const addBlacklist = () => {
+    const k = blInput.trim().toLowerCase();
+    if (!k || draft.blacklist.includes(k)) { setBlInput(""); return; }
+    set({ blacklist: [...draft.blacklist, k] });
+    setBlInput("");
+  };
+  const removeBlacklist = (k) => set({ blacklist: draft.blacklist.filter((x) => x !== k) });
+  const onBlKey = (e) => {
+    if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addBlacklist(); }
+    else if (e.key === "Backspace" && !blInput && draft.blacklist.length) {
+      set({ blacklist: draft.blacklist.slice(0, -1) });
     }
   };
 
@@ -472,6 +489,32 @@ function Configuracoes({ api, showToast }) {
                 <input className="input" type="text" placeholder="Digite e pressione Enter"
                   value={kwInput} onChange={(e) => setKwInput(e.target.value)} onKeyDown={onKwKey} />
                 <button type="button" className="btn btn-secondary" onClick={addKeyword}><Icon.plus /> Add</button>
+              </div>
+            </div>
+          </div>
+
+          <div className="setting-row" style={{ gridTemplateColumns: "1fr", paddingBottom: 4 }}>
+            <div className="setting-meta">
+              <label className="field-label">Blacklist de palavras</label>
+              <div className="field-hint" style={{ marginTop: 2 }}>Produtos cujo título contiver qualquer uma dessas palavras são ignorados.</div>
+            </div>
+            <div className="tags-box">
+              {draft.blacklist.length > 0 ? (
+                <div className="tags-wrap">
+                  {draft.blacklist.map((k) => (
+                    <span className="tag tag-danger" key={k}>
+                      {k}
+                      <button type="button" onClick={() => removeBlacklist(k)} aria-label={"Remover " + k}><Icon.x /></button>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="no-tags">Nenhuma palavra bloqueada.</div>
+              )}
+              <div className="tag-add-row">
+                <input className="input" type="text" placeholder="Digite e pressione Enter"
+                  value={blInput} onChange={(e) => setBlInput(e.target.value)} onKeyDown={onBlKey} />
+                <button type="button" className="btn btn-secondary" onClick={addBlacklist}><Icon.plus /> Add</button>
               </div>
             </div>
           </div>

@@ -102,6 +102,7 @@ class SettingsRequest(BaseModel):
     min_repost_days: int | None = None
     peripheral_keywords: list[str] | None = None
     brand_whitelist: list[str] | None = None
+    keyword_blacklist: list[str] | None = None
 
 
 @app.put("/api/settings")
