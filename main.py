@@ -35,12 +35,15 @@ def run_api_server():
 
 
 def run_scheduler():
-    settings = get_settings()
-    interval = settings["check_interval_minutes"]
-    print(f"[Scheduler] Rodando a cada {interval} minutos.", flush=True)
     run_check()
-    schedule.every(interval).minutes.do(run_check)
+    last_interval = None
     while True:
+        interval = get_settings()["check_interval_minutes"]
+        if interval != last_interval:
+            schedule.clear()
+            schedule.every(interval).minutes.do(run_check)
+            print(f"[Scheduler] Intervalo: {interval} minutos.", flush=True)
+            last_interval = interval
         schedule.run_pending()
         time.sleep(30)
 
