@@ -47,8 +47,7 @@ PERIPHERAL_KEYWORDS = [
     "gabinete", "pc case", "tower case", "机箱",
     # cooler / fan
     "cooler", "cooling fan", "散热",
-    # cadeira gamer
-    "cadeira gamer", "gaming chair", "游戏椅",
+    # cadeira gamer (removido — fora do escopo do canal)
     # hub / adaptador
     "hub usb", "usb hub", "adaptador", "docking", "集线器",
     # cabo

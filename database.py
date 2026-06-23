@@ -7,7 +7,7 @@ DB_PATH = os.path.join(os.getenv("HOME", ""), "promo_bot.db") if os.getenv("HOME
 _DEFAULTS = {
     "price_drop_threshold": "0.15",
     "cold_start_threshold": "0.30",
-    "check_interval_minutes": "60",
+    "check_interval_minutes": "10",
     "min_repost_days": "3",
     "peripheral_keywords": "",  # populated from config on first init
     "brand_whitelist": "",  # vazio = sem filtro de marca
