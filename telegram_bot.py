@@ -5,9 +5,8 @@ from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID
 
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
-# Remessa Conforme: 20% Imposto de Importação cobrado pela plataforma no checkout.
-# Aplicado sobre o preço final após cupom e moedas.
-BR_TAX_RATE = 0.20
+# Remessa Conforme (2026): II federal removido para compras < US$50.
+# O preço retornado pela API já inclui o ICMS (~20%) — nenhum imposto adicional.
 
 
 def _brl(amount: float) -> str:
@@ -25,7 +24,6 @@ def _format_message(product: dict, drop_pct: float) -> str:
 
     price_after_coupon = max(0.0, price - coupon)
     price_after_coins = max(0.0, price_after_coupon - coin)
-    final_price = price_after_coins * (1 + BR_TAX_RATE)
 
     title = product["title"][:150]  # caption Telegram: limite 1024 chars
 
@@ -45,7 +43,7 @@ def _format_message(product: dict, drop_pct: float) -> str:
         lines.append(f"🪙 Moedas: -{_brl(coin)} → <b>{_brl(price_after_coins)}</b>")
 
     lines += [
-        f"🇧🇷 Est. c/ impostos: <b>{_brl(final_price)}</b>",
+        f"🇧🇷 Sem II federal · ICMS ~20% incluso",
         "",
         f"{stars} {product['rating']:.1f}/5  |  📦 {sales_fmt} vendidos",
         "",
