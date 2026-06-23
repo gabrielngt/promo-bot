@@ -79,37 +79,34 @@ def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_
 def run_check():
     settings = get_settings()
     brands = settings["brand_whitelist"]
+    max_posts = settings["max_posts_per_cycle"]
     total_posts = 0
 
     # busca por categoria (sempre)
     print(f"[Monitor] Verificando {len(CATEGORIES)} categorias...")
     for category_id in CATEGORIES:
-        if total_posts >= settings["max_posts_per_cycle"]:
+        if total_posts >= max_posts:
             break
         posts = check_category(category_id, settings, posts_so_far=total_posts)
         total_posts += posts
         time.sleep(1)
 
-    # busca adicional por marca (quando whitelist estiver preenchida)
-    if brands and total_posts < settings["max_posts_per_cycle"]:
+    # busca por marca — cada marca tem orçamento próprio de 2 posts
+    if brands:
         print(f"[Monitor] Buscando {len(brands)} marca(s) na whitelist...")
-        seen_ids = set()
-        brand_products = []
+        per_brand_max = max(2, max_posts // len(brands))
+        brand_settings = {**settings, "max_posts_per_cycle": per_brand_max}
         for brand in brands:
-            for raw in get_products_by_brand(brand):
-                pid = str(raw.get("product_id", ""))
-                if pid and pid not in seen_ids:
-                    seen_ids.add(pid)
-                    brand_products.append(raw)
+            raw_products = get_products_by_brand(brand)
+            if raw_products:
+                posts = check_category(
+                    category_id=f"brand:{brand}",
+                    settings=brand_settings,
+                    posts_so_far=0,
+                    raw_products_override=raw_products,
+                )
+                total_posts += posts
             time.sleep(1)
-        if brand_products:
-            posts = check_category(
-                category_id="brand_search",
-                settings=settings,
-                posts_so_far=total_posts,
-                raw_products_override=brand_products,
-            )
-            total_posts += posts
 
     print(f"[Monitor] Verificação concluída. {total_posts} promoções postadas.")
     return total_posts
