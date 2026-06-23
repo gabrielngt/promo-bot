@@ -118,6 +118,7 @@ def get_product_detail(product_id: str) -> dict | None:
             .get("resp_result", {})
         )
         if result.get("resp_code") != 200:
+            print(f"[AliExpress] product detail error: {result}")
             return None
         products = result.get("result", {}).get("products", {}).get("product", [])
         if not products:
