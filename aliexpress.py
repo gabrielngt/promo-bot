@@ -112,6 +112,7 @@ def get_product_detail(product_id: str) -> dict | None:
         resp = requests.post(API_URL, data=params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
+        print(f"[AliExpress] raw response keys: {list(data.keys())}")
         result = (
             data
             .get("aliexpress_affiliate_product_detail_get_response", {})
