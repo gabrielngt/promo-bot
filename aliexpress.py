@@ -45,6 +45,41 @@ def _base_params(method: str) -> dict:
     }
 
 
+def generate_affiliate_links(urls: list[str]) -> dict[str, str]:
+    """Converte até 50 URLs em links de afiliado rastreáveis. Retorna {url_original: url_afiliado}."""
+    if not urls:
+        return {}
+    params = _base_params("aliexpress.affiliate.link.generate")
+    params.update({
+        "tracking_id": ALIEXPRESS_TRACKING_ID,
+        "source_values": ",".join(urls[:50]),
+        "promotion_link_type": "0",
+    })
+    params["sign"] = _sign(params)
+    try:
+        resp = requests.post(API_URL, data=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        if "error_response" in data:
+            print(f"[AliExpress] link.generate error: {data['error_response']}")
+            return {}
+        result = (
+            data
+            .get("aliexpress_affiliate_link_generate_response", {})
+            .get("resp_result", {})
+        )
+        if result.get("resp_code") != 200:
+            print(f"[AliExpress] link.generate: {result.get('resp_msg')}")
+            return {}
+        links = result.get("result", {}).get("promotion_links", {}).get("promotion_link", [])
+        if isinstance(links, dict):
+            links = [links]
+        return {lk["source_value"]: lk["promotion_url"] for lk in links if lk.get("promotion_url")}
+    except Exception as e:
+        print(f"[AliExpress] Exceção em link.generate: {e}")
+        return {}
+
+
 # ── WORKAROUND (Standard API) ─────────────────────────────────────────────────
 # Remover quando Advanced API for aprovada e descomentar os métodos abaixo.
 
@@ -84,7 +119,21 @@ def _query_products(keywords: str = "", category_id: str = "", page: int = 1, pa
         if result.get("resp_code") != 200:
             print(f"[AliExpress] product.query: {result.get('resp_msg')}")
             return []
-        return result.get("result", {}).get("products", {}).get("product", [])
+        products = result.get("result", {}).get("products", {}).get("product", [])
+
+        # Garante link rastreável: gera via link.generate para produtos sem promotion_link
+        needs_link = [
+            (i, raw.get("product_detail_url", f"https://www.aliexpress.com/item/{raw.get('product_id')}.html"))
+            for i, raw in enumerate(products)
+            if not raw.get("promotion_link")
+        ]
+        if needs_link:
+            link_map = generate_affiliate_links([url for _, url in needs_link])
+            for i, url in needs_link:
+                if url in link_map:
+                    products[i]["promotion_link"] = link_map[url]
+
+        return products
     except Exception as e:
         print(f"[AliExpress] Exceção em product.query: {e}")
         return []
