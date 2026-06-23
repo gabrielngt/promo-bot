@@ -3,6 +3,7 @@ from aliexpress import get_hot_products, get_products_by_brand, parse_product
 from database import upsert_product, can_post, mark_posted, get_settings
 from telegram_bot import post_product
 
+import re
 import time
 
 
@@ -18,8 +19,30 @@ def _matches_brand(title: str, brands: list) -> bool:
     return any(entry["name"].lower() in t for entry in brands)
 
 
-def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_products_override: list = None) -> int:
-    raw_products = raw_products_override if raw_products_override is not None else get_hot_products(category_id, page_size=PRODUCTS_PER_CATEGORY)
+def _title_fingerprint(title: str) -> str:
+    words = sorted(re.findall(r'[a-z0-9]{3,}', title.lower()))
+    return "".join(words)[:60]
+
+
+def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_products_override: list = None, seen_fingerprints: dict = None) -> int:
+    if seen_fingerprints is None:
+        seen_fingerprints = {}
+
+    raw_list = raw_products_override if raw_products_override is not None else get_hot_products(category_id, page_size=PRODUCTS_PER_CATEGORY)
+
+    # Dedup por título similar — mantém o mais barato por fingerprint neste lote
+    cheapest: dict[str, dict] = {}
+    for raw in raw_list:
+        p = parse_product(raw)
+        if not p:
+            continue
+        fp = _title_fingerprint(p["title"])
+        if fp in seen_fingerprints:
+            continue
+        if fp not in cheapest or p["price"] < cheapest[fp]["price"]:
+            cheapest[fp] = p
+    seen_fingerprints.update({fp: True for fp in cheapest})
+
     posts_made = 0
     max_posts = settings["max_posts_per_cycle"] - posts_so_far
     keywords = settings["peripheral_keywords"]
@@ -27,13 +50,9 @@ def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_
     threshold = settings["price_drop_threshold"] * 100
     cold_threshold = settings["cold_start_threshold"] * 100
 
-    for raw in raw_products:
+    for product in cheapest.values():
         if posts_made >= max_posts:
             break
-
-        product = parse_product(raw)
-        if not product:
-            continue
 
         if keywords and not _is_peripheral(product["title"], keywords):
             continue
@@ -45,10 +64,7 @@ def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_
 
         if state["is_new"]:
             if product["discount_pct"] >= cold_threshold and can_post(product["product_id"], product["price"]):
-                print(
-                    f"[Monitor] Cold start deal: {product['title'][:50]} "
-                    f"| -{product['discount_pct']:.0f}% | R$ {product['price']:.2f}"
-                )
+                print(f"[Monitor] Cold start deal: {product['title'][:50]} | -{product['discount_pct']:.0f}% | R$ {product['price']:.2f}")
                 success = post_product(product, product["discount_pct"])
                 if success:
                     mark_posted(product["product_id"], product["price"])
@@ -63,10 +79,7 @@ def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_
         drop_pct = (min_price - product["price"]) / min_price * 100
 
         if drop_pct >= threshold and can_post(product["product_id"], product["price"]):
-            print(
-                f"[Monitor] Promoção detectada: {product['title'][:50]} "
-                f"| -{drop_pct:.1f}% | R$ {product['price']:.2f}"
-            )
+            print(f"[Monitor] Promoção detectada: {product['title'][:50]} | -{drop_pct:.1f}% | R$ {product['price']:.2f}")
             success = post_product(product, drop_pct)
             if success:
                 mark_posted(product["product_id"], product["price"])
@@ -81,13 +94,14 @@ def run_check():
     brands = settings["brand_whitelist"]
     max_posts = settings["max_posts_per_cycle"]
     total_posts = 0
+    seen_fingerprints: dict = {}  # compartilhado entre categorias e marcas no ciclo
 
     # busca por categoria (sempre)
     print(f"[Monitor] Verificando {len(CATEGORIES)} categorias...")
     for category_id in CATEGORIES:
         if total_posts >= max_posts:
             break
-        posts = check_category(category_id, settings, posts_so_far=total_posts)
+        posts = check_category(category_id, settings, posts_so_far=total_posts, seen_fingerprints=seen_fingerprints)
         total_posts += posts
         time.sleep(1)
 
@@ -111,6 +125,7 @@ def run_check():
                     settings=brand_settings,
                     posts_so_far=0,
                     raw_products_override=raw_products,
+                    seen_fingerprints=seen_fingerprints,
                 )
                 total_posts += posts
             time.sleep(1)
