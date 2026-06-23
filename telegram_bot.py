@@ -1,3 +1,5 @@
+import re
+import time
 import requests
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID
 
@@ -49,16 +51,25 @@ def post_product(product: dict, drop_pct: float) -> bool:
         except Exception:
             pass  # cai para sendMessage abaixo
 
-    try:
-        resp = requests.post(f"{TELEGRAM_API}/sendMessage", json=payload, timeout=15)
-        result = resp.json()
-        if not result.get("ok"):
-            print(f"[Telegram] Erro: {result.get('description')}")
+    for attempt in range(3):
+        try:
+            resp = requests.post(f"{TELEGRAM_API}/sendMessage", json=payload, timeout=15)
+            result = resp.json()
+            if result.get("ok"):
+                return True
+            description = result.get("description", "")
+            match = re.search(r"retry after (\d+)", description)
+            if match:
+                wait = int(match.group(1)) + 1
+                print(f"[Telegram] Rate limit — aguardando {wait}s (tentativa {attempt+1}/3)")
+                time.sleep(wait)
+                continue
+            print(f"[Telegram] Erro: {description}")
             return False
-        return True
-    except Exception as e:
-        print(f"[Telegram] Exceção: {e}")
-        return False
+        except Exception as e:
+            print(f"[Telegram] Exceção: {e}")
+            return False
+    return False
 
 
 def send_admin_message(text: str):

@@ -9,6 +9,7 @@ _DEFAULTS = {
     "cold_start_threshold": "0.30",
     "check_interval_minutes": "10",
     "min_repost_days": "3",
+    "max_posts_per_cycle": "5",
     "peripheral_keywords": "",  # populated from config on first init
     "brand_whitelist": "",  # vazio = sem filtro de marca
 }
@@ -74,6 +75,7 @@ def get_settings() -> dict:
         "cold_start_threshold": float(s.get("cold_start_threshold", 0.30)),
         "check_interval_minutes": int(s.get("check_interval_minutes", 60)),
         "min_repost_days": int(s.get("min_repost_days", 3)),
+        "max_posts_per_cycle": int(s.get("max_posts_per_cycle", 5)),
         "peripheral_keywords": [
             kw.strip() for kw in s.get("peripheral_keywords", "").splitlines() if kw.strip()
         ],

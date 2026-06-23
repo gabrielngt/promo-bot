@@ -21,12 +21,16 @@ def _matches_brand(title: str, brands: list[str]) -> bool:
 def check_category(category_id: str, settings: dict) -> int:
     raw_products = get_hot_products(category_id, page_size=PRODUCTS_PER_CATEGORY)
     posts_made = 0
+    max_posts = settings["max_posts_per_cycle"]
     keywords = settings["peripheral_keywords"]
     brands = settings["brand_whitelist"]
     threshold = settings["price_drop_threshold"] * 100
     cold_threshold = settings["cold_start_threshold"] * 100
 
     for raw in raw_products:
+        if posts_made >= max_posts:
+            break
+
         product = parse_product(raw)
         if not product:
             continue
