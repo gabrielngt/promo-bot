@@ -77,7 +77,7 @@ def add_product(body: AddProductRequest, key: str = Security(require_auth)):
     if not product:
         raise HTTPException(404, "Produto não encontrado. A busca por ID direto está indisponível temporariamente (aguardando aprovação da Advanced API). O scheduler descobre produtos automaticamente pelas categorias a cada 60 min.")
 
-    upsert_product(product["product_id"], product["title"], product["price"])
+    upsert_product(product["product_id"], product["title"], product["price"], product.get("link", ""))
     return {"message": "Produto adicionado", "product": product}
 
 

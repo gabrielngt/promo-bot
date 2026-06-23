@@ -24,12 +24,14 @@ def init_db(keyword_defaults: list[str] | None = None):
     with get_connection() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS products (
-                product_id      TEXT PRIMARY KEY,
-                title           TEXT,
-                min_price       REAL,
-                last_price      REAL,
-                last_checked    TEXT,
-                posted_at       TEXT
+                product_id          TEXT PRIMARY KEY,
+                title               TEXT,
+                min_price           REAL,
+                last_price          REAL,
+                last_checked        TEXT,
+                posted_at           TEXT,
+                last_posted_price   REAL,
+                link                TEXT DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS price_history (
@@ -44,6 +46,12 @@ def init_db(keyword_defaults: list[str] | None = None):
                 value   TEXT
             );
         """)
+        # migração segura para DBs existentes
+        for col, definition in [("last_posted_price", "REAL"), ("link", "TEXT DEFAULT ''")]:
+            try:
+                conn.execute(f"ALTER TABLE products ADD COLUMN {col} {definition}")
+            except Exception:
+                pass
         # insere defaults apenas se ainda não existirem
         defaults = dict(_DEFAULTS)
         if keyword_defaults:
@@ -87,7 +95,7 @@ def update_settings(data: dict):
 
 # ---------- Products ----------
 
-def upsert_product(product_id: str, title: str, price: float) -> dict:
+def upsert_product(product_id: str, title: str, price: float, link: str = "") -> dict:
     now = datetime.utcnow().isoformat()
     with get_connection() as conn:
         row = conn.execute(
@@ -96,8 +104,8 @@ def upsert_product(product_id: str, title: str, price: float) -> dict:
 
         if row is None:
             conn.execute(
-                "INSERT INTO products (product_id, title, min_price, last_price, last_checked) VALUES (?, ?, ?, ?, ?)",
-                (product_id, title, price, price, now),
+                "INSERT INTO products (product_id, title, min_price, last_price, last_checked, link) VALUES (?, ?, ?, ?, ?, ?)",
+                (product_id, title, price, price, now, link),
             )
             conn.execute(
                 "INSERT INTO price_history (product_id, price, checked_at) VALUES (?, ?, ?)",
@@ -107,8 +115,8 @@ def upsert_product(product_id: str, title: str, price: float) -> dict:
 
         min_price = min(row["min_price"], price)
         conn.execute(
-            "UPDATE products SET title=?, min_price=?, last_price=?, last_checked=? WHERE product_id=?",
-            (title, min_price, price, now, product_id),
+            "UPDATE products SET title=?, min_price=?, last_price=?, last_checked=?, link=? WHERE product_id=?",
+            (title, min_price, price, now, link or row["link"], product_id),
         )
         conn.execute(
             "INSERT INTO price_history (product_id, price, checked_at) VALUES (?, ?, ?)",
@@ -117,30 +125,38 @@ def upsert_product(product_id: str, title: str, price: float) -> dict:
         return {"is_new": False, "min_price": row["min_price"], "last_price": row["last_price"]}
 
 
-def can_post(product_id: str) -> bool:
+def can_post(product_id: str, current_price: float = 0.0) -> bool:
     settings = get_settings()
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT posted_at FROM products WHERE product_id = ?", (product_id,)
+            "SELECT posted_at, last_posted_price FROM products WHERE product_id = ?", (product_id,)
         ).fetchone()
         if not row or not row["posted_at"]:
             return True
         posted_at = datetime.fromisoformat(row["posted_at"])
-        return datetime.utcnow() - posted_at > timedelta(days=settings["min_repost_days"])
+        elapsed = datetime.utcnow() - posted_at
+        last_price = row["last_posted_price"]
+
+        # mesmo preço nas últimas 12h → não reposta
+        if last_price and abs(current_price - last_price) < 0.01 and elapsed < timedelta(hours=12):
+            return False
+
+        return elapsed > timedelta(days=settings["min_repost_days"])
 
 
-def mark_posted(product_id: str):
+def mark_posted(product_id: str, price: float = 0.0):
     now = datetime.utcnow().isoformat()
     with get_connection() as conn:
         conn.execute(
-            "UPDATE products SET posted_at=? WHERE product_id=?", (now, product_id)
+            "UPDATE products SET posted_at=?, last_posted_price=? WHERE product_id=?",
+            (now, price, product_id),
         )
 
 
 def get_all_products() -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT product_id, title, min_price, last_price, last_checked, posted_at "
+            "SELECT product_id, title, min_price, last_price, last_checked, posted_at, link "
             "FROM products ORDER BY last_checked DESC"
         ).fetchall()
     return [dict(r) for r in rows]

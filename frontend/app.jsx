@@ -94,6 +94,7 @@ const toApi = (s) => ({
 const mapProduct = (p) => ({
   id:         p.product_id,
   name:       p.title || "Sem título",
+  link:       p.link || "",
   current:    p.last_price ?? 0,
   min:        p.min_price  ?? 0,
   drop_pct:   p.drop_pct   ?? 0,
@@ -251,7 +252,9 @@ function Produtos({ api, showToast }) {
                 return (
                   <tr key={p.id}>
                     <td>
-                      <div className="prod-name">{p.name}</div>
+                      {p.link
+                        ? <a className="prod-name" href={p.link} target="_blank" rel="noopener noreferrer">{p.name}</a>
+                        : <div className="prod-name">{p.name}</div>}
                       <div className="prod-id">#{p.id}</div>
                     </td>
                     <td className="num-col price">{fmt(p.current)}</td>

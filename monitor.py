@@ -37,17 +37,17 @@ def check_category(category_id: str, settings: dict) -> int:
         if not _matches_brand(product["title"], brands):
             continue
 
-        state = upsert_product(product["product_id"], product["title"], product["price"])
+        state = upsert_product(product["product_id"], product["title"], product["price"], product.get("link", ""))
 
         if state["is_new"]:
-            if product["discount_pct"] >= cold_threshold and can_post(product["product_id"]):
+            if product["discount_pct"] >= cold_threshold and can_post(product["product_id"], product["price"]):
                 print(
                     f"[Monitor] Cold start deal: {product['title'][:50]} "
                     f"| -{product['discount_pct']:.0f}% | R$ {product['price']:.2f}"
                 )
                 success = post_product(product, product["discount_pct"])
                 if success:
-                    mark_posted(product["product_id"])
+                    mark_posted(product["product_id"], product["price"])
                     posts_made += 1
                     time.sleep(2)
             continue
@@ -58,14 +58,14 @@ def check_category(category_id: str, settings: dict) -> int:
 
         drop_pct = (min_price - product["price"]) / min_price * 100
 
-        if drop_pct >= threshold and can_post(product["product_id"]):
+        if drop_pct >= threshold and can_post(product["product_id"], product["price"]):
             print(
                 f"[Monitor] Promoção detectada: {product['title'][:50]} "
                 f"| -{drop_pct:.1f}% | R$ {product['price']:.2f}"
             )
             success = post_product(product, drop_pct)
             if success:
-                mark_posted(product["product_id"])
+                mark_posted(product["product_id"], product["price"])
                 posts_made += 1
                 time.sleep(2)
 
