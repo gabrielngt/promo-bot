@@ -75,19 +75,26 @@ function makeApi(baseUrl, apiKey) {
 }
 
 /* ── Settings conversion (API uses decimals, UI uses percentages) ── */
+const parseBrandStr = (str) => {
+  const [name, kws] = str.split(":");
+  return { name: name.trim(), keywords: kws ? kws.split(",").map(k => k.trim()).filter(Boolean) : [] };
+};
+const serializeBrand = (b) =>
+  b.keywords.length > 0 ? `${b.name}:${b.keywords.join(",")}` : b.name;
+
 const fromApi = (s) => ({
   minDrop:  Math.round((s.price_drop_threshold  ?? 0.15) * 100),
   interval: s.check_interval_minutes ?? 60,
   minDays:  s.min_repost_days        ?? 7,
   keywords: s.peripheral_keywords    ?? [],
-  brands:   s.brand_whitelist        ?? [],
+  brands:   (s.brand_whitelist ?? []).map(parseBrandStr),
 });
 const toApi = (s) => ({
   price_drop_threshold:   s.minDrop / 100,
   check_interval_minutes: Number(s.interval),
   min_repost_days:        Number(s.minDays),
   peripheral_keywords:    s.keywords,
-  brand_whitelist:        s.brands,
+  brand_whitelist:        s.brands.map(serializeBrand),
 });
 
 /* ── Product mapping ── */
@@ -362,7 +369,9 @@ function Configuracoes({ api, showToast }) {
       .catch((err) => showToast("Erro ao carregar configurações: " + err.message, "err"));
   }, [api]);
 
-  const [brandInput, setBrandInput] = useState("");
+  const [newBrandInput, setNewBrandInput] = useState("");
+  const [brandKwInputs, setBrandKwInputs] = useState({});
+
   const addKeyword = () => {
     const k = kwInput.trim().toLowerCase();
     if (!k || draft.keywords.includes(k)) { setKwInput(""); return; }
@@ -376,19 +385,28 @@ function Configuracoes({ api, showToast }) {
       set({ keywords: draft.keywords.slice(0, -1) });
     }
   };
+
   const addBrand = () => {
-    const b = brandInput.trim();
-    if (!b || draft.brands.map(x => x.toLowerCase()).includes(b.toLowerCase())) { setBrandInput(""); return; }
-    set({ brands: [...draft.brands, b] });
-    setBrandInput("");
-  };
-  const removeBrand = (b) => set({ brands: draft.brands.filter((x) => x !== b) });
-  const onBrandKey = (e) => {
-    if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addBrand(); }
-    else if (e.key === "Backspace" && !brandInput && draft.brands.length) {
-      set({ brands: draft.brands.slice(0, -1) });
+    const name = newBrandInput.trim();
+    if (!name || draft.brands.some(b => b.name.toLowerCase() === name.toLowerCase())) {
+      setNewBrandInput(""); return;
     }
+    set({ brands: [...draft.brands, { name, keywords: [] }] });
+    setNewBrandInput("");
   };
+  const removeBrand = (idx) => set({ brands: draft.brands.filter((_, i) => i !== idx) });
+  const addBrandKw = (idx) => {
+    const key = draft.brands[idx].name;
+    const kw = (brandKwInputs[key] || "").trim().toLowerCase();
+    if (!kw || draft.brands[idx].keywords.includes(kw)) {
+      setBrandKwInputs(p => ({ ...p, [key]: "" })); return;
+    }
+    set({ brands: draft.brands.map((b, i) => i === idx ? { ...b, keywords: [...b.keywords, kw] } : b) });
+    setBrandKwInputs(p => ({ ...p, [key]: "" }));
+  };
+  const removeBrandKw = (idx, kw) => set({
+    brands: draft.brands.map((b, i) => i === idx ? { ...b, keywords: b.keywords.filter(k => k !== kw) } : b)
+  });
 
   const handleSave = async () => {
     setSaving(true);
@@ -459,25 +477,58 @@ function Configuracoes({ api, showToast }) {
           <div className="setting-row" style={{ gridTemplateColumns: "1fr", borderBottom: "none", paddingBottom: 4 }}>
             <div className="setting-meta">
               <label className="field-label">Whitelist de marcas</label>
-              <div className="field-hint" style={{ marginTop: 2 }}>Se preenchido, só posta produtos de marcas listadas aqui. Vazio = aceita qualquer marca.</div>
+              <div className="field-hint" style={{ marginTop: 2 }}>
+                Só posta produtos das marcas listadas. Adicione filtros por tipo de produto em cada marca (ex: só mouses da ATK). Vazio = aceita qualquer marca.
+              </div>
             </div>
             <div className="tags-box">
-              {draft.brands.length > 0 ? (
-                <div className="tags-wrap">
-                  {draft.brands.map((b) => (
-                    <span className="tag" key={b}>
-                      {b}
-                      <button type="button" onClick={() => removeBrand(b)} aria-label={"Remover " + b}><Icon.x /></button>
-                    </span>
-                  ))}
-                </div>
-              ) : (
+              {draft.brands.length === 0 && (
                 <div className="no-tags">Vazio — todas as marcas aceitas.</div>
               )}
-              <div className="tag-add-row">
-                <input className="input" type="text" placeholder="Ex: Logitech, Redragon, HyperX"
-                  value={brandInput} onChange={(e) => setBrandInput(e.target.value)} onKeyDown={onBrandKey} />
-                <button type="button" className="btn btn-secondary" onClick={addBrand}><Icon.plus /> Add</button>
+              {draft.brands.map((entry, idx) => {
+                const bKey = entry.name;
+                const kwVal = brandKwInputs[bKey] || "";
+                const addKw = () => addBrandKw(idx);
+                return (
+                  <div key={bKey} className="brand-entry">
+                    <div className="brand-entry-head">
+                      <span className="brand-entry-name">{entry.name}</span>
+                      <button type="button" className="btn btn-ghost-danger" onClick={() => removeBrand(idx)} aria-label={"Remover " + entry.name}><Icon.trash /></button>
+                    </div>
+                    <div className="brand-entry-kws">
+                      {entry.keywords.length === 0
+                        ? <span className="brand-kws-empty">Todos os produtos desta marca</span>
+                        : (
+                          <div className="tags-wrap" style={{ marginBottom: 8 }}>
+                            {entry.keywords.map(kw => (
+                              <span className="tag" key={kw}>
+                                {kw}
+                                <button type="button" onClick={() => removeBrandKw(idx, kw)} aria-label={"Remover " + kw}><Icon.x /></button>
+                              </span>
+                            ))}
+                          </div>
+                        )
+                      }
+                      <div className="tag-add-row">
+                        <input className="input" type="text" placeholder="tipo de produto (ex: mouse)"
+                          style={{ fontSize: 12.5 }}
+                          value={kwVal}
+                          onChange={(e) => setBrandKwInputs(p => ({ ...p, [bKey]: e.target.value }))}
+                          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addKw(); } }}
+                        />
+                        <button type="button" className="btn btn-secondary" onClick={addKw}><Icon.plus /> Add</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              <div className="tag-add-row" style={{ marginTop: draft.brands.length > 0 ? 8 : 0 }}>
+                <input className="input" type="text" placeholder="Nome da marca (ex: Logitech)"
+                  value={newBrandInput}
+                  onChange={(e) => setNewBrandInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addBrand(); } }}
+                />
+                <button type="button" className="btn btn-secondary" onClick={addBrand}><Icon.plus /> Marca</button>
               </div>
             </div>
           </div>

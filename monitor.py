@@ -11,11 +11,11 @@ def _is_peripheral(title: str, keywords: list[str]) -> bool:
     return any(kw.lower() in t for kw in keywords)
 
 
-def _matches_brand(title: str, brands: list[str]) -> bool:
+def _matches_brand(title: str, brands: list) -> bool:
     if not brands:
         return True
     t = title.lower()
-    return any(brand.lower() in t for brand in brands)
+    return any(entry["name"].lower() in t for entry in brands)
 
 
 def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_products_override: list = None) -> int:
@@ -91,16 +91,23 @@ def run_check():
         total_posts += posts
         time.sleep(1)
 
-    # busca por marca — cada marca tem orçamento próprio de 2 posts
+    # busca por marca — cada marca tem orçamento próprio
     if brands:
         print(f"[Monitor] Buscando {len(brands)} marca(s) na whitelist...")
         per_brand_max = max(2, max_posts // len(brands))
         brand_settings = {**settings, "max_posts_per_cycle": per_brand_max}
-        for brand in brands:
-            raw_products = get_products_by_brand(brand)
+        for entry in brands:
+            brand_name = entry["name"]
+            kw_filter = entry["keywords"]  # tipos de produto para esta marca
+            raw_products = get_products_by_brand(brand_name)
+            if kw_filter:
+                raw_products = [
+                    r for r in raw_products
+                    if any(kw.lower() in r.get("product_title", "").lower() for kw in kw_filter)
+                ]
             if raw_products:
                 posts = check_category(
-                    category_id=f"brand:{brand}",
+                    category_id=f"brand:{brand_name}",
                     settings=brand_settings,
                     posts_so_far=0,
                     raw_products_override=raw_products,

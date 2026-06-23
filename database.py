@@ -72,6 +72,15 @@ def init_db(keyword_defaults: list[str] | None = None):
 
 # ---------- Settings ----------
 
+def _parse_brand_entry(line: str) -> dict:
+    if ":" in line:
+        name, _, kws_str = line.partition(":")
+        keywords = [k.strip() for k in kws_str.split(",") if k.strip()]
+    else:
+        name, keywords = line, []
+    return {"name": name.strip(), "keywords": keywords}
+
+
 def get_settings() -> dict:
     with get_connection() as conn:
         rows = conn.execute("SELECT key, value FROM settings").fetchall()
@@ -87,7 +96,9 @@ def get_settings() -> dict:
             kw.strip() for kw in s.get("peripheral_keywords", "").splitlines() if kw.strip()
         ],
         "brand_whitelist": [
-            b.strip() for b in s.get("brand_whitelist", "").splitlines() if b.strip()
+            _parse_brand_entry(b)
+            for b in s.get("brand_whitelist", "").splitlines()
+            if b.strip()
         ],
     }
 
