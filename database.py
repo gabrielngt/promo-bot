@@ -110,7 +110,7 @@ def get_settings() -> dict:
 def update_settings(data: dict):
     with get_connection() as conn:
         for k, v in data.items():
-            if k in ("peripheral_keywords", "brand_whitelist") and isinstance(v, list):
+            if k in ("peripheral_keywords", "brand_whitelist", "keyword_blacklist") and isinstance(v, list):
                 v = "\n".join(v)
             conn.execute(
                 "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (k, str(v))
