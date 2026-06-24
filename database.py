@@ -12,10 +12,10 @@ def _resolve_db_path() -> str:
 DB_PATH = _resolve_db_path()
 
 _DEFAULTS = {
-    "price_drop_threshold": "0.15",
+    "price_drop_threshold": "0.05",
     "cold_start_threshold": "0.30",
     "check_interval_minutes": "10",
-    "min_repost_days": "3",
+    "min_repost_days": "1",
     "max_posts_per_cycle": "5",
     "peripheral_keywords": "",  # populated from config on first init
     "brand_whitelist": "",  # vazio = sem filtro de marca
