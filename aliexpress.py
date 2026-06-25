@@ -224,6 +224,31 @@ def extract_product_id(url_or_id: str) -> str | None:
     return None
 
 
+def _parse_coupon(raw: dict, price: float) -> dict | None:
+    """Extrai cupom do promo_code_info. Calcula o preço final quando o desconto é fixo."""
+    import re
+    info = raw.get("promo_code_info") or {}
+    code = info.get("promo_code")
+    if not code:
+        return None
+    desc = info.get("code_value", "")
+    min_spend = _parse_price(info.get("code_mini_spend") or "0")
+    # desconto fixo descrito como "... get BRL 28.19 off" (cupons em % são só exibidos)
+    discount = 0.0
+    if "%" not in desc:
+        m = re.search(r"get\s+[A-Za-z]{0,3}\s*([\d.,]+)\s*off", desc, re.IGNORECASE)
+        if m:
+            discount = _parse_price(m.group(1))
+    applicable = discount > 0 and price >= min_spend
+    return {
+        "code": code,
+        "discount": discount,
+        "min_spend": min_spend,
+        "applicable": applicable,
+        "final_price": round(price - discount, 2) if applicable else price,
+    }
+
+
 def parse_product(raw: dict) -> dict | None:
     """Normaliza um produto da API para o formato interno."""
     try:
@@ -239,23 +264,7 @@ def parse_product(raw: dict) -> dict | None:
         rating = raw.get("evaluate_rate", "0%").replace("%", "")
         sales = raw.get("lastest_volume", 0)
 
-        # Cupom: desconta se preço mínimo for atendido
-        coupon_amount = _parse_price(raw.get("coupon_amount") or "0")
-        coupon_min = _parse_price(raw.get("coupon_min_amount") or "0")
-        coupon_applied = (
-            coupon_amount
-            if coupon_amount > 0 and (coupon_min == 0 or price >= coupon_min)
-            else 0.0
-        )
-
-        # Desconto com moedas — campo varia por versão da API; extrai se disponível.
-        # Nota: o link de compra é o mesmo (moedas são abatidas no checkout pelo saldo da conta).
-        coin_discount = _parse_price(
-            raw.get("coins_discount")
-            or raw.get("ae_item_coins_discount")
-            or raw.get("coin_discount")
-            or "0"
-        )
+        coupon = _parse_coupon(raw, price)
 
         return {
             "product_id": product_id,
@@ -263,8 +272,7 @@ def parse_product(raw: dict) -> dict | None:
             "price": price,
             "original_price": original_price,
             "discount_pct": float(discount) if discount else 0.0,
-            "coupon_amount": coupon_applied,
-            "coin_discount": coin_discount,
+            "coupon": coupon,
             "link": promotion_link,
             "image_url": image_url,
             "rating": float(rating) / 20 if rating else 0.0,

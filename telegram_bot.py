@@ -19,11 +19,7 @@ def _format_message(product: dict, drop_pct: float) -> str:
 
     price = product["price"]
     original_price = product["original_price"]
-    coupon = product.get("coupon_amount", 0.0)
-    coin = product.get("coin_discount", 0.0)
-
-    price_after_coupon = max(0.0, price - coupon)
-    price_after_coins = max(0.0, price_after_coupon - coin)
+    coupon = product.get("coupon")
 
     title = product["title"][:150]  # caption Telegram: limite 1024 chars
 
@@ -36,11 +32,20 @@ def _format_message(product: dict, drop_pct: float) -> str:
         f"✅ <b>{_brl(price)}</b>  (-{drop_pct:.0f}%)",
     ]
 
-    if coupon > 0:
-        lines.append(f"🎟 Cupom: -{_brl(coupon)} → <b>{_brl(price_after_coupon)}</b>")
-
-    if coin > 0:
-        lines.append(f"🪙 Moedas: -{_brl(coin)} → <b>{_brl(price_after_coins)}</b>")
+    if coupon:
+        code = coupon["code"]
+        if coupon["applicable"]:
+            lines.append(
+                f"🎟 Cupom <code>{code}</code>: -{_brl(coupon['discount'])} → "
+                f"<b>{_brl(coupon['final_price'])}</b>"
+            )
+        elif coupon["discount"] > 0:
+            lines.append(
+                f"🎟 Cupom <code>{code}</code>: -{_brl(coupon['discount'])} "
+                f"(pedidos acima de {_brl(coupon['min_spend'])})"
+            )
+        else:
+            lines.append(f"🎟 Cupom <code>{code}</code> disponível")
 
     lines += [
         f"🇧🇷 Sem II federal · ICMS ~20% incluso",
