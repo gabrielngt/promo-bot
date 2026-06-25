@@ -14,9 +14,10 @@ def _post_with_shipping(product: dict, pct: float) -> bool:
         product["shipping"] = shipping
     return post_product(product, pct)
 
-# Cold start: produto novo (sem histórico próprio) só é postado com base no
-# desconto reportado pela API — campo notoriamente inflado. Por isso exigimos
-# também sinais de qualidade (avaliação + vendas) antes de postar.
+# Um produto é postado se (a) caiu abaixo do mínimo histórico (queda real) ou
+# (b) tem bom desconto sobre o preço original (deal de tabela). O desconto da
+# API é notoriamente inflado, então o caminho (b) exige sinais de qualidade
+# (avaliação + vendas) antes de postar.
 COLD_START_MIN_RATING = 4.0   # 0 a 5
 COLD_START_MIN_SALES = 50     # volume recente
 
@@ -89,31 +90,25 @@ def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_
 
         state = upsert_product(product["product_id"], product["title"], product["price"], product.get("link", ""))
 
-        if state["is_new"]:
-            if (product["discount_pct"] >= cold_threshold
-                    and _passes_quality(product)
-                    and can_post(product["product_id"], product["price"])):
-                print(f"[Monitor] Cold start deal: {product['title'][:50]} | -{product['discount_pct']:.0f}% | R$ {product['price']:.2f}")
-                if _post_with_shipping(product, product["discount_pct"]):
-                    mark_posted(product["product_id"], product["price"])
-                    seen_fingerprints[fp] = True  # marca só o que foi postado
-                    posts_made += 1
-                    time.sleep(2)
-            continue
-
         min_price = state["min_price"]
-        if min_price <= 0:
+        drop_pct = (min_price - product["price"]) / min_price * 100 if min_price > 0 else 0.0
+
+        is_drop = drop_pct >= threshold                                   # caiu abaixo do mínimo histórico
+        is_discount = product["discount_pct"] >= cold_threshold and _passes_quality(product)  # desconto sobre o original
+
+        if not (is_drop or is_discount):
+            continue
+        if not can_post(product["product_id"], product["price"]):
             continue
 
-        drop_pct = (min_price - product["price"]) / min_price * 100
-
-        if drop_pct >= threshold and can_post(product["product_id"], product["price"]):
-            print(f"[Monitor] Promoção detectada: {product['title'][:50]} | -{drop_pct:.1f}% | R$ {product['price']:.2f}")
-            if _post_with_shipping(product, drop_pct):
-                mark_posted(product["product_id"], product["price"])
-                seen_fingerprints[fp] = True  # marca só o que foi postado
-                posts_made += 1
-                time.sleep(2)
+        pct = product["discount_pct"] if is_discount else drop_pct
+        motivo = "queda vs mínimo" if is_drop else "desconto vs original"
+        print(f"[Monitor] Deal ({motivo}): {product['title'][:50]} | -{pct:.0f}% | R$ {product['price']:.2f}")
+        if _post_with_shipping(product, pct):
+            mark_posted(product["product_id"], product["price"])
+            seen_fingerprints[fp] = True  # marca só o que foi postado
+            posts_made += 1
+            time.sleep(2)
 
     return posts_made
 

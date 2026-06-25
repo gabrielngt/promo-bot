@@ -75,7 +75,7 @@ def add_product(body: AddProductRequest, key: str = Security(require_auth)):
 
     product = get_product_detail(pid)
     if not product:
-        raise HTTPException(404, "Produto não encontrado. A busca por ID direto está indisponível temporariamente (aguardando aprovação da Advanced API). O scheduler descobre produtos automaticamente pelas categorias a cada 60 min.")
+        raise HTTPException(404, "Produto não encontrado.")
 
     upsert_product(product["product_id"], product["title"], product["price"], product.get("link", ""))
     return {"message": "Produto adicionado", "product": product}
@@ -100,6 +100,7 @@ class SettingsRequest(BaseModel):
     cold_start_threshold: float | None = None
     check_interval_minutes: int | None = None
     min_repost_days: int | None = None
+    max_posts_per_cycle: int | None = None
     peripheral_keywords: list[str] | None = None
     brand_whitelist: list[str] | None = None
     keyword_blacklist: list[str] | None = None
