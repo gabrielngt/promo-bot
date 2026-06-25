@@ -80,16 +80,36 @@ def generate_affiliate_links(urls: list[str]) -> dict[str, str]:
         return {}
 
 
-# ── WORKAROUND (Standard API) ─────────────────────────────────────────────────
-# Remover quando Advanced API for aprovada e descomentar os métodos abaixo.
+def _extract_products(result: dict) -> list:
+    """Aceita products:[...] (formato do doc) e products:{product:[...]} (gateway real)."""
+    prods = result.get("result", {}).get("products", [])
+    if isinstance(prods, dict):
+        prods = prods.get("product", [])
+    return prods or []
+
+
+def _ensure_affiliate_links(products: list) -> list:
+    """Garante promotion_link rastreável; gera via link.generate para os que faltarem."""
+    needs_link = [
+        (i, raw.get("product_detail_url", f"https://www.aliexpress.com/item/{raw.get('product_id')}.html"))
+        for i, raw in enumerate(products)
+        if not raw.get("promotion_link")
+    ]
+    if needs_link:
+        link_map = generate_affiliate_links([url for _, url in needs_link])
+        for i, url in needs_link:
+            if url in link_map:
+                products[i]["promotion_link"] = link_map[url]
+    return products
+
 
 def get_products_by_brand(brand: str, page_size: int = 50) -> list[dict]:
-    """Busca produtos de uma marca específica como keyword."""
+    """Busca produtos de uma marca por keyword (product.query — busca geral)."""
     return _query_products(keywords=brand, page_size=page_size)
 
 
-def _query_products(keywords: str = "", category_id: str = "", page: int = 1, page_size: int = 50) -> list[dict]:
-    """Standard API: aliexpress.affiliate.product.query"""
+def _query_products(keywords: str = "", page: int = 1, page_size: int = 50) -> list[dict]:
+    """Standard API: aliexpress.affiliate.product.query (busca por keyword)."""
     params = _base_params("aliexpress.affiliate.product.query")
     params.update({
         "tracking_id": ALIEXPRESS_TRACKING_ID,
@@ -101,8 +121,6 @@ def _query_products(keywords: str = "", category_id: str = "", page: int = 1, pa
     })
     if keywords:
         params["keywords"] = keywords
-    if category_id:
-        params["category_ids"] = category_id
     params["sign"] = _sign(params)
     try:
         resp = requests.post(API_URL, data=params, timeout=15)
@@ -119,104 +137,76 @@ def _query_products(keywords: str = "", category_id: str = "", page: int = 1, pa
         if result.get("resp_code") != 200:
             print(f"[AliExpress] product.query: {result.get('resp_msg')}")
             return []
-        products = result.get("result", {}).get("products", {}).get("product", [])
-
-        # Garante link rastreável: gera via link.generate para produtos sem promotion_link
-        needs_link = [
-            (i, raw.get("product_detail_url", f"https://www.aliexpress.com/item/{raw.get('product_id')}.html"))
-            for i, raw in enumerate(products)
-            if not raw.get("promotion_link")
-        ]
-        if needs_link:
-            link_map = generate_affiliate_links([url for _, url in needs_link])
-            for i, url in needs_link:
-                if url in link_map:
-                    products[i]["promotion_link"] = link_map[url]
-
-        return products
+        return _ensure_affiliate_links(_extract_products(result))
     except Exception as e:
         print(f"[AliExpress] Exceção em product.query: {e}")
         return []
 
 
 def get_hot_products(category_id: str, page: int = 1, page_size: int = 50) -> list[dict]:
-    # WORKAROUND: Standard API via product.query por categoria.
-    # Quando Advanced API for aprovada, substituir pelo bloco comentado abaixo:
-    #
-    # params = _base_params("aliexpress.affiliate.hotproduct.query")
-    # params.update({
-    #     "category_id": category_id,
-    #     "tracking_id": ALIEXPRESS_TRACKING_ID,
-    #     "page_no": str(page),
-    #     "page_size": str(page_size),
-    #     "target_currency": "BRL",
-    #     "target_language": "PT",
-    #     "sort": "LAST_VOLUME_DESC",
-    # })
-    # params["sign"] = _sign(params)
-    # try:
-    #     resp = requests.post(API_URL, data=params, timeout=15)
-    #     resp.raise_for_status()
-    #     data = resp.json()
-    #     if "error_response" in data:
-    #         print(f"[AliExpress] hotproduct API error: {data['error_response']}")
-    #         return []
-    #     result = (
-    #         data
-    #         .get("aliexpress_affiliate_hotproduct_query_response", {})
-    #         .get("resp_result", {})
-    #     )
-    #     if result.get("resp_code") != 200:
-    #         print(f"[AliExpress] Erro na categoria {category_id}: {result.get('resp_msg')}")
-    #         return []
-    #     return result.get("result", {}).get("products", {}).get("product", [])
-    # except Exception as e:
-    #     print(f"[AliExpress] Exceção na categoria {category_id}: {e}")
-    #     return []
-    return _query_products(category_id=category_id, page=page, page_size=page_size)
+    """Advanced API: aliexpress.affiliate.hotproduct.query — produtos em alta por categoria."""
+    params = _base_params("aliexpress.affiliate.hotproduct.query")
+    params.update({
+        "category_ids": category_id,
+        "tracking_id": ALIEXPRESS_TRACKING_ID,
+        "page_no": str(page),
+        "page_size": str(page_size),
+        "target_currency": "BRL",
+        "target_language": "PT",
+        "sort": "LAST_VOLUME_DESC",
+    })
+    params["sign"] = _sign(params)
+    try:
+        resp = requests.post(API_URL, data=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        if "error_response" in data:
+            print(f"[AliExpress] hotproduct.query error: {data['error_response']}")
+            return []
+        result = (
+            data
+            .get("aliexpress_affiliate_hotproduct_query_response", {})
+            .get("resp_result", {})
+        )
+        if result.get("resp_code") != 200:
+            print(f"[AliExpress] hotproduct.query categoria {category_id}: {result.get('resp_msg')}")
+            return []
+        return _ensure_affiliate_links(_extract_products(result))
+    except Exception as e:
+        print(f"[AliExpress] Exceção em hotproduct.query ({category_id}): {e}")
+        return []
 
 
 def get_product_detail(product_id: str) -> dict | None:
-    # WORKAROUND: busca via product.query usando o ID como keyword.
-    # Quando Advanced API for aprovada, substituir pelo bloco comentado abaixo:
-    #
-    # params = _base_params("aliexpress.affiliate.product.detail.get")
-    # params.update({
-    #     "product_ids": product_id,
-    #     "tracking_id": ALIEXPRESS_TRACKING_ID,
-    #     "target_currency": "BRL",
-    #     "target_language": "PT",
-    # })
-    # params["sign"] = _sign(params)
-    # try:
-    #     resp = requests.post(API_URL, data=params, timeout=15)
-    #     resp.raise_for_status()
-    #     data = resp.json()
-    #     if "error_response" in data:
-    #         print(f"[AliExpress] product detail API error: {data['error_response']}")
-    #         return None
-    #     result = (
-    #         data
-    #         .get("aliexpress_affiliate_product_detail_get_response", {})
-    #         .get("resp_result", {})
-    #     )
-    #     if result.get("resp_code") != 200:
-    #         print(f"[AliExpress] product detail error: {result}")
-    #         return None
-    #     products = result.get("result", {}).get("products", {}).get("product", [])
-    #     if not products:
-    #         return None
-    #     return parse_product(products[0])
-    # except Exception as e:
-    #     print(f"[AliExpress] Erro ao buscar produto {product_id}: {e}")
-    #     return None
-    products = _query_products(keywords=product_id, page_size=20)
-    for raw in products:
-        if str(raw.get("product_id")) == product_id:
-            return parse_product(raw)
-    return None
-
-# ─────────────────────────────────────────────────────────────────────────────
+    """Advanced API: aliexpress.affiliate.productdetail.get — busca exata por ID."""
+    params = _base_params("aliexpress.affiliate.productdetail.get")
+    params.update({
+        "product_ids": product_id,
+        "tracking_id": ALIEXPRESS_TRACKING_ID,
+        "target_currency": "BRL",
+        "target_language": "PT",
+    })
+    params["sign"] = _sign(params)
+    try:
+        resp = requests.post(API_URL, data=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        if "error_response" in data:
+            print(f"[AliExpress] productdetail.get error: {data['error_response']}")
+            return None
+        result = (
+            data
+            .get("aliexpress_affiliate_productdetail_get_response", {})
+            .get("resp_result", {})
+        )
+        if result.get("resp_code") != 200:
+            print(f"[AliExpress] productdetail.get {product_id}: {result.get('resp_msg')}")
+            return None
+        products = _ensure_affiliate_links(_extract_products(result))
+        return parse_product(products[0]) if products else None
+    except Exception as e:
+        print(f"[AliExpress] Exceção em productdetail.get ({product_id}): {e}")
+        return None
 
 
 def extract_product_id(url_or_id: str) -> str | None:
