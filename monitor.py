@@ -1,10 +1,18 @@
 from config import CATEGORIES, PRODUCTS_PER_CATEGORY
-from aliexpress import get_hot_products, get_products_by_brand, parse_product
+from aliexpress import get_hot_products, get_products_by_brand, parse_product, get_shipping
 from database import upsert_product, can_post, mark_posted, get_settings
 from telegram_bot import post_product
 
 import re
 import time
+
+
+def _post_with_shipping(product: dict, pct: float) -> bool:
+    """Enriquece com frete (só agora, na hora de postar) e posta."""
+    shipping = get_shipping(product["product_id"], product.get("sku_id", ""), product["price"])
+    if shipping:
+        product["shipping"] = shipping
+    return post_product(product, pct)
 
 # Cold start: produto novo (sem histórico próprio) só é postado com base no
 # desconto reportado pela API — campo notoriamente inflado. Por isso exigimos
@@ -86,7 +94,7 @@ def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_
                     and _passes_quality(product)
                     and can_post(product["product_id"], product["price"])):
                 print(f"[Monitor] Cold start deal: {product['title'][:50]} | -{product['discount_pct']:.0f}% | R$ {product['price']:.2f}")
-                if post_product(product, product["discount_pct"]):
+                if _post_with_shipping(product, product["discount_pct"]):
                     mark_posted(product["product_id"], product["price"])
                     seen_fingerprints[fp] = True  # marca só o que foi postado
                     posts_made += 1
@@ -101,7 +109,7 @@ def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_
 
         if drop_pct >= threshold and can_post(product["product_id"], product["price"]):
             print(f"[Monitor] Promoção detectada: {product['title'][:50]} | -{drop_pct:.1f}% | R$ {product['price']:.2f}")
-            if post_product(product, drop_pct):
+            if _post_with_shipping(product, drop_pct):
                 mark_posted(product["product_id"], product["price"])
                 seen_fingerprints[fp] = True  # marca só o que foi postado
                 posts_made += 1

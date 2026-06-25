@@ -47,6 +47,18 @@ def _format_message(product: dict, drop_pct: float) -> str:
         else:
             lines.append(f"🎟 Cupom <code>{code}</code> disponível")
 
+    shipping = product.get("shipping")
+    if shipping:
+        fee = shipping["fee"]
+        days = shipping.get("max_days") or shipping.get("min_days")
+        prazo = f" · chega em ~{days} dias" if days else ""
+        if fee > 0:
+            base = coupon["final_price"] if (coupon and coupon["applicable"]) else price
+            lines.append(f"🚚 Frete: {_brl(fee)}{prazo}")
+            lines.append(f"💰 Total com frete: <b>{_brl(base + fee)}</b>")
+        else:
+            lines.append(f"🚚 Frete grátis{prazo}")
+
     lines += [
         f"🇧🇷 Sem II federal · ICMS ~20% incluso",
         "",

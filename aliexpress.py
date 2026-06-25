@@ -209,6 +209,55 @@ def get_product_detail(product_id: str) -> dict | None:
         return None
 
 
+def get_shipping(product_id: str, sku_id: str, sale_price: float) -> dict | None:
+    """Frete + prazo para o Brasil. Retorna {fee, min_days, max_days} ou None."""
+    if not sku_id:
+        return None
+    params = _base_params("aliexpress.affiliate.product.shipping.get")
+    params.update({
+        "product_id": str(product_id),
+        "sku_id": str(sku_id),
+        "ship_to_country": "BR",
+        "target_currency": "BRL",
+        "target_sale_price": f"{sale_price:.2f}",
+        "target_language": "PT",
+        "tax_rate": "0",
+    })
+    params["sign"] = _sign(params)
+    try:
+        resp = requests.post(API_URL, data=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        if "error_response" in data:
+            print(f"[AliExpress] shipping.get error: {data['error_response']}")
+            return None
+        result = (
+            data
+            .get("aliexpress_affiliate_product_shipping_get_response", {})
+            .get("resp_result", {})
+        )
+        if result.get("resp_code") != 200:
+            return None
+        r = result.get("result", {})
+        if not r:
+            return None
+
+        def _days(v):
+            try:
+                return int(float(v))
+            except (TypeError, ValueError):
+                return None
+
+        return {
+            "fee": _parse_price(r.get("shipping_fee") or "0"),
+            "min_days": _days(r.get("min_delivery_days")),
+            "max_days": _days(r.get("max_delivery_days") or r.get("delivery_days")),
+        }
+    except Exception as e:
+        print(f"[AliExpress] Exceção em shipping.get ({product_id}): {e}")
+        return None
+
+
 def extract_product_id(url_or_id: str) -> str | None:
     """Extracts AliExpress product ID from a URL or returns the ID directly."""
     import re
@@ -268,6 +317,7 @@ def parse_product(raw: dict) -> dict | None:
 
         return {
             "product_id": product_id,
+            "sku_id": str(raw.get("sku_id", "")),
             "title": title,
             "price": price,
             "original_price": original_price,
