@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from database import (
     get_all_products, delete_product, get_price_history,
-    get_settings, update_settings, upsert_product,
+    get_settings, update_settings, upsert_product, set_watch,
 )
 from aliexpress import extract_product_id, get_product_detail
 
@@ -65,6 +65,7 @@ def product_history(product_id: str, key: str = Security(require_auth)):
 
 class AddProductRequest(BaseModel):
     url_or_id: str
+    target_price: float | None = None
 
 
 @app.post("/api/products", status_code=201)
@@ -78,7 +79,8 @@ def add_product(body: AddProductRequest, key: str = Security(require_auth)):
         raise HTTPException(404, "Produto não encontrado.")
 
     upsert_product(product["product_id"], product["title"], product["price"], product.get("link", ""))
-    return {"message": "Produto adicionado", "product": product}
+    set_watch(product["product_id"], body.target_price)
+    return {"message": "Produto adicionado à watchlist", "product": product}
 
 
 @app.delete("/api/products/{product_id}")

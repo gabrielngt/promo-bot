@@ -67,7 +67,7 @@ function makeApi(baseUrl, apiKey) {
   return {
     health:        ()           => req("GET",    "/api/health"),
     products:      ()           => req("GET",    "/api/products"),
-    addProduct:    (url_or_id)  => req("POST",   "/api/products", { url_or_id }),
+    addProduct:    (url_or_id, target_price) => req("POST", "/api/products", { url_or_id, target_price }),
     deleteProduct: (id)         => req("DELETE", `/api/products/${id}`),
     getSettings:   ()           => req("GET",    "/api/settings"),
     saveSettings:  (d)          => req("PUT",    "/api/settings", d),
@@ -109,6 +109,8 @@ const mapProduct = (p) => ({
   current:    p.last_price ?? 0,
   min:        p.min_price  ?? 0,
   drop_pct:   p.drop_pct   ?? 0,
+  watched:    !!p.is_watched,
+  target:     p.target_price ?? 0,
   lastPosted: p.posted_at
     ? new Date(p.posted_at + "Z").toLocaleDateString("pt-BR")
     : "—",
@@ -252,6 +254,7 @@ function Produtos({ api, showToast }) {
                 <th>Produto</th>
                 <th className="num-col">Preço atual</th>
                 <th className="num-col">Preço mínimo</th>
+                <th className="num-col">Alvo</th>
                 <th className="num-col">Queda</th>
                 <th>Último post</th>
                 <th className="actions-col"></th>
@@ -266,10 +269,14 @@ function Produtos({ api, showToast }) {
                       {p.link
                         ? <a className="prod-name" href={p.link} target="_blank" rel="noopener noreferrer">{p.name}</a>
                         : <div className="prod-name">{p.name}</div>}
-                      <div className="prod-id">#{p.id}</div>
+                      <div className="prod-id">
+                        #{p.id}
+                        {p.watched && <span className="watch-badge" title="Vigiado pela watchlist">👁 vigiado</span>}
+                      </div>
                     </td>
                     <td className="num-col price">{fmt(p.current)}</td>
                     <td className="num-col price price-min">{fmt(p.min)}</td>
+                    <td className="num-col price">{p.target > 0 ? fmt(p.target) : "—"}</td>
                     <td className="num-col">
                       {p.drop_pct === 0 ? (
                         <span className="drop-badge flat">—</span>
@@ -300,6 +307,7 @@ function Produtos({ api, showToast }) {
 /* ── Adicionar produto ── */
 function Adicionar({ api, showToast, onAdded }) {
   const [value, setValue] = useState("");
+  const [target, setTarget] = useState("");
   const [loading, setLoading] = useState(false);
 
   const submit = async (e) => {
@@ -307,9 +315,11 @@ function Adicionar({ api, showToast, onAdded }) {
     if (!value.trim() || loading) return;
     setLoading(true);
     try {
-      await api.addProduct(value.trim());
-      showToast("Produto adicionado com sucesso.");
+      const targetPrice = target.trim() === "" ? null : Number(target);
+      await api.addProduct(value.trim(), targetPrice);
+      showToast("Produto adicionado à watchlist.");
       setValue("");
+      setTarget("");
       onAdded();
     } catch (err) {
       showToast("Erro: " + err.message, "err");
@@ -322,7 +332,7 @@ function Adicionar({ api, showToast, onAdded }) {
     <div className="page">
       <div className="page-head">
         <div className="page-title">Adicionar produto</div>
-        <div className="page-desc">Cole a URL do produto na AliExpress ou informe o ID. O bot começará a monitorar o preço.</div>
+        <div className="page-desc">Cole a URL do produto na AliExpress ou informe o ID. O bot passa a vigiar esse item todo ciclo e posta quando atingir o preço-alvo ou cair abaixo do mínimo histórico.</div>
       </div>
 
       <form className="card add-card" onSubmit={submit}>
@@ -331,6 +341,16 @@ function Adicionar({ api, showToast, onAdded }) {
           placeholder="https://aliexpress.com/item/1005006789012.html"
           value={value} onChange={(e) => setValue(e.target.value)} autoFocus disabled={loading} />
         <div className="field-hint">Aceita link completo, link curto ou apenas o ID numérico do item.</div>
+
+        <label className="field-label" htmlFor="add-target" style={{ marginTop: 18, display: "block" }}>Preço-alvo (opcional)</label>
+        <div className="num-input-wrap">
+          <input id="add-target" className="input mono" type="number" min="0" step="0.01"
+            placeholder="ex: 199,90"
+            value={target} onChange={(e) => setTarget(e.target.value)} disabled={loading} />
+          <span className="num-suffix">R$</span>
+        </div>
+        <div className="field-hint">Se definido, o bot posta assim que o preço chegar nesse valor ou abaixo. Sem alvo, posta quando cair abaixo do mínimo histórico.</div>
+
         <div style={{ marginTop: 20 }}>
           <button className="btn btn-primary" type="submit" disabled={!value.trim() || loading}>
             <Icon.plus /> {loading ? "Adicionando..." : "Adicionar"}

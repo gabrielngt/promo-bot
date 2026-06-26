@@ -18,7 +18,10 @@ _DEFAULTS = {
 
 
 def get_connection():
-    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+    # prepare_threshold=None desliga prepared statements no lado do cliente,
+    # necessário para o transaction pooler do Supabase (porta 6543), que reusa
+    # conexões entre transações. Inofensivo no session pooler.
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row, prepare_threshold=None)
 
 
 def init_db(keyword_defaults: list[str] | None = None):
@@ -51,6 +54,8 @@ def init_db(keyword_defaults: list[str] | None = None):
         """)
         conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS last_posted_price REAL")
         conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS link TEXT DEFAULT ''")
+        conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS is_watched BOOLEAN DEFAULT FALSE")
+        conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS target_price REAL")
         defaults = dict(_DEFAULTS)
         if keyword_defaults:
             defaults["peripheral_keywords"] = "\n".join(keyword_defaults)
@@ -169,8 +174,26 @@ def mark_posted(product_id: str, price: float = 0.0):
 def get_all_products() -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT product_id, title, min_price, last_price, last_checked, posted_at, link "
+            "SELECT product_id, title, min_price, last_price, last_checked, posted_at, link, "
+            "is_watched, target_price "
             "FROM products ORDER BY last_checked DESC"
+        ).fetchall()
+    return list(rows)
+
+
+def set_watch(product_id: str, target_price: float | None = None):
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE products SET is_watched = TRUE, target_price = %s WHERE product_id = %s",
+            (target_price, product_id),
+        )
+
+
+def get_watchlist() -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT product_id, title, min_price, last_price, target_price "
+            "FROM products WHERE is_watched = TRUE ORDER BY title"
         ).fetchall()
     return list(rows)
 

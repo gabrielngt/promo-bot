@@ -1,6 +1,6 @@
 from config import CATEGORIES, PRODUCTS_PER_CATEGORY
-from aliexpress import get_hot_products, get_products_by_brand, parse_product, get_shipping
-from database import upsert_product, can_post, mark_posted, get_settings
+from aliexpress import get_hot_products, get_products_by_brand, parse_product, get_shipping, get_product_detail
+from database import upsert_product, can_post, mark_posted, get_settings, get_watchlist
 from telegram_bot import post_product
 
 import re
@@ -113,12 +113,60 @@ def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_
     return posts_made
 
 
+def check_watchlist(settings: dict, max_posts: int, seen_fingerprints: dict) -> int:
+    """Re-checa os produtos vigiados (curados pelo usuário). Posta ao atingir o
+    preço-alvo OU cair abaixo do mínimo histórico. Sem filtros de qualidade/marca:
+    o usuário escolheu estes itens explicitamente."""
+    watched = get_watchlist()
+    if not watched:
+        return 0
+
+    print(f"[Monitor] Vigiando {len(watched)} produto(s) da watchlist...")
+    threshold = settings["price_drop_threshold"] * 100
+    posts_made = 0
+
+    for item in watched:
+        if posts_made >= max_posts:
+            break
+
+        fresh = get_product_detail(item["product_id"])
+        if not fresh:
+            continue
+
+        state = upsert_product(fresh["product_id"], fresh["title"], fresh["price"], fresh.get("link", ""))
+        current = fresh["price"]
+        target = item.get("target_price")
+        min_price = state["min_price"]
+        drop_pct = (min_price - current) / min_price * 100 if min_price > 0 else 0.0
+
+        hit_target = target is not None and current <= target
+        is_drop = drop_pct >= threshold
+
+        if not (hit_target or is_drop):
+            continue
+        if not can_post(fresh["product_id"], current):
+            continue
+
+        motivo = f"atingiu alvo R$ {target:.2f}" if hit_target else "queda vs mínimo"
+        print(f"[Monitor] Watchlist ({motivo}): {fresh['title'][:50]} | R$ {current:.2f}")
+        if _post_with_shipping(fresh, drop_pct):
+            mark_posted(fresh["product_id"], current)
+            seen_fingerprints[_title_fingerprint(fresh["title"])] = True
+            posts_made += 1
+            time.sleep(2)
+
+    return posts_made
+
+
 def run_check():
     settings = get_settings()
     brands = settings["brand_whitelist"]
     max_posts = settings["max_posts_per_cycle"]
     total_posts = 0
     seen_fingerprints: dict = {}  # só fingerprints já POSTADOS neste ciclo
+
+    # Watchlist tem prioridade — itens escolhidos a dedo pelo usuário.
+    total_posts += check_watchlist(settings, max_posts, seen_fingerprints)
 
     # Marcas têm prioridade (curadas pelo usuário) e orçamento próprio,
     # mas o total do ciclo nunca passa de max_posts.
