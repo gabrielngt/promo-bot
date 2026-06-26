@@ -74,15 +74,9 @@ def _format_message(product: dict, drop_pct: float) -> str:
     return "\n".join(lines)
 
 
-def post_product(product: dict, drop_pct: float) -> bool:
-    """Posts a product to the Telegram channel. Returns True on success."""
+def post_product(product: dict, drop_pct: float) -> int | None:
+    """Posts a product to the Telegram channel. Returns message_id on success, None on failure."""
     text = _format_message(product, drop_pct)
-    payload = {
-        "chat_id": TELEGRAM_CHANNEL_ID,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": False,
-    }
 
     # tenta com foto primeiro, cai para texto simples se não tiver imagem
     if product.get("image_url"):
@@ -97,17 +91,24 @@ def post_product(product: dict, drop_pct: float) -> bool:
                 },
                 timeout=15,
             )
-            if resp.json().get("ok"):
-                return True
+            data = resp.json()
+            if data.get("ok"):
+                return data["result"]["message_id"]
         except Exception:
             pass  # cai para sendMessage abaixo
 
+    payload = {
+        "chat_id": TELEGRAM_CHANNEL_ID,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": False,
+    }
     for attempt in range(3):
         try:
             resp = requests.post(f"{TELEGRAM_API}/sendMessage", json=payload, timeout=15)
             result = resp.json()
             if result.get("ok"):
-                return True
+                return result["result"]["message_id"]
             description = result.get("description", "")
             match = re.search(r"retry after (\d+)", description)
             if match:
@@ -116,11 +117,30 @@ def post_product(product: dict, drop_pct: float) -> bool:
                 time.sleep(wait)
                 continue
             print(f"[Telegram] Erro: {description}")
-            return False
+            return None
         except Exception as e:
             print(f"[Telegram] Exceção: {e}")
-            return False
-    return False
+            return None
+    return None
+
+
+def fetch_reaction_updates(offset: int = 0) -> tuple[list[dict], int]:
+    """Busca updates de contagem de reações do canal. Retorna (updates, próximo offset)."""
+    try:
+        resp = requests.post(
+            f"{TELEGRAM_API}/getUpdates",
+            json={"offset": offset, "allowed_updates": ["message_reaction_count"], "timeout": 0},
+            timeout=10,
+        )
+        data = resp.json()
+        if not data.get("ok"):
+            return [], offset
+        updates = data["result"]
+        if not updates:
+            return [], offset
+        return [u for u in updates if "message_reaction_count" in u], updates[-1]["update_id"] + 1
+    except Exception:
+        return [], offset
 
 
 def send_admin_message(text: str):
@@ -148,7 +168,7 @@ def test_connection() -> bool:
             f"{TELEGRAM_API}/sendMessage",
             json={
                 "chat_id": TELEGRAM_CHANNEL_ID,
-                "text": "✅ Bot de promoções iniciado e conectado!",
+                "text": "Bot de promoções iniciado e conectado!",
             },
             timeout=10,
         )

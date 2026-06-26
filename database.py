@@ -99,6 +99,10 @@ _SCHEMA_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_price_history_product ON price_history (product_id, checked_at)",
     _TYPE_MIGRATION,
     _FK_MIGRATION,
+    # reações do Telegram
+    "ALTER TABLE products ADD COLUMN IF NOT EXISTS telegram_message_id BIGINT",
+    "ALTER TABLE products ADD COLUMN IF NOT EXISTS reactions_positive INT DEFAULT 0",
+    "ALTER TABLE products ADD COLUMN IF NOT EXISTS reactions_negative INT DEFAULT 0",
 ]
 
 
@@ -240,12 +244,12 @@ def can_post(product_id: str, current_price: float = 0.0) -> bool:
         return elapsed > timedelta(days=settings["min_repost_days"])
 
 
-def mark_posted(product_id: str, price: float = 0.0):
+def mark_posted(product_id: str, price: float = 0.0, message_id: int | None = None):
     now = _utcnow()
     with get_connection() as conn:
         conn.execute(
-            "UPDATE products SET posted_at=%s, last_posted_price=%s WHERE product_id=%s",
-            (now, price, product_id),
+            "UPDATE products SET posted_at=%s, last_posted_price=%s, telegram_message_id=%s WHERE product_id=%s",
+            (now, price, message_id, product_id),
         )
 
 
@@ -253,7 +257,7 @@ def get_all_products() -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT product_id, title, min_price, last_price, last_checked, posted_at, link, "
-            "is_watched, target_price "
+            "is_watched, target_price, telegram_message_id, reactions_positive, reactions_negative "
             "FROM products ORDER BY last_checked DESC"
         ).fetchall()
     return list(rows)
@@ -309,6 +313,28 @@ def clear_discovered() -> int:
     with get_connection() as conn:
         cur = conn.execute("DELETE FROM products WHERE is_watched IS NOT TRUE")
     return cur.rowcount
+
+
+def save_reactions(message_id: int, positive: int, negative: int):
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE products SET reactions_positive=%s, reactions_negative=%s WHERE telegram_message_id=%s",
+            (positive, negative, message_id),
+        )
+
+
+def get_reactions_offset() -> int:
+    with get_connection() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key='reactions_offset'").fetchone()
+    return int(row["value"]) if row and row["value"] else 0
+
+
+def set_reactions_offset(offset: int):
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('reactions_offset', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            (str(offset),)
+        )
 
 
 def get_price_history(product_id: str) -> list[dict]:

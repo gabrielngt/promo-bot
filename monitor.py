@@ -1,14 +1,14 @@
 from config import CATEGORIES, PRODUCTS_PER_CATEGORY
 from aliexpress import get_hot_products, get_products_by_brand, parse_product, get_shipping, get_product_detail, search_products
-from database import upsert_product, can_post, mark_posted, get_settings, get_watchlist, get_recent_min
-from telegram_bot import post_product
+from database import upsert_product, can_post, mark_posted, get_settings, get_watchlist, get_recent_min, save_reactions, get_reactions_offset, set_reactions_offset
+from telegram_bot import post_product, fetch_reaction_updates
 
 import re
 import time
 
 
-def _post_with_shipping(product: dict, pct: float) -> bool:
-    """Enriquece com frete (só agora, na hora de postar) e posta."""
+def _post_with_shipping(product: dict, pct: float) -> int | None:
+    """Enriquece com frete (só agora, na hora de postar) e posta. Retorna message_id ou None."""
     shipping = get_shipping(product["product_id"], product.get("sku_id", ""), product["price"])
     if shipping:
         product["shipping"] = shipping
@@ -64,6 +64,10 @@ def _title_similarity(a: str, b: str) -> float:
 # "mesmo produto". Mais alto = menos falsos positivos, menos equivalentes achados.
 EQUIVALENT_MIN_SIMILARITY = 0.5
 
+# Limiar para considerar dois títulos "o mesmo produto" no dedup de ciclo.
+# Mais alto que EQUIVALENT para evitar fundir produtos distintos (ex: mouse vs mousepad).
+DEDUP_SIMILARITY = 0.65
+
 
 def _cheapest_equivalent(product: dict) -> dict:
     """Busca anúncios equivalentes (outros vendedores) e retorna o mais barato entre
@@ -92,18 +96,27 @@ def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_
 
     raw_list = raw_products_override if raw_products_override is not None else get_hot_products(category_id, page_size=PRODUCTS_PER_CATEGORY)
 
-    # Dedup local: mantém o mais barato por fingerprint neste lote.
-    # Pula fingerprints que JÁ foram postados neste ciclo.
+    # Dedup local: agrupa por fingerprint E por similaridade de título (Jaccard >= 0.65),
+    # mantendo o mais barato por grupo. Pula o que já foi postado neste ciclo.
     cheapest: dict[str, dict] = {}
     for raw in raw_list:
         p = parse_product(raw)
         if not p:
             continue
         fp = _title_fingerprint(p["title"])
+
         if fp in seen_fingerprints:
             continue
-        if fp not in cheapest or p["price"] < cheapest[fp]["price"]:
-            cheapest[fp] = p
+        if any(_title_similarity(p["title"], t) >= DEDUP_SIMILARITY for t in seen_fingerprints.values()):
+            continue
+
+        # Procura bucket existente por similaridade; se não achar, usa o próprio fp.
+        bucket = next(
+            (efp for efp, ep in cheapest.items() if _title_similarity(p["title"], ep["title"]) >= DEDUP_SIMILARITY),
+            fp,
+        )
+        if bucket not in cheapest or p["price"] < cheapest[bucket]["price"]:
+            cheapest[bucket] = p
 
     posts_made = 0
     max_posts = settings["max_posts_per_cycle"] - posts_so_far
@@ -142,9 +155,10 @@ def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_
         pct = product["discount_pct"] if is_discount else drop_pct
         motivo = "queda vs mínimo" if is_drop else "desconto vs original"
         print(f"[Monitor] Deal ({motivo}): {product['title'][:50]} | -{pct:.0f}% | R$ {product['price']:.2f}")
-        if _post_with_shipping(product, pct):
-            mark_posted(product["product_id"], product["price"])
-            seen_fingerprints[fp] = True  # marca só o que foi postado
+        msg_id = _post_with_shipping(product, pct)
+        if msg_id:
+            mark_posted(product["product_id"], product["price"], msg_id)
+            seen_fingerprints[fp] = product["title"]
             posts_made += 1
             time.sleep(2)
 
@@ -197,13 +211,40 @@ def check_watchlist(settings: dict, max_posts: int, seen_fingerprints: dict) -> 
         alt_note = f" | {best['seller_count']} anúncios" if best.get("seller_count", 1) > 1 else ""
         motivo = f"atingiu alvo R$ {target:.2f}" if hit_target else "queda vs mínimo"
         print(f"[Monitor] Watchlist ({motivo}): {fresh['title'][:50]} | R$ {current:.2f}{alt_note}")
-        if _post_with_shipping(best, drop_pct):
-            mark_posted(fresh["product_id"], current)
-            seen_fingerprints[_title_fingerprint(fresh["title"])] = True
+        msg_id = _post_with_shipping(best, drop_pct)
+        if msg_id:
+            mark_posted(fresh["product_id"], current, msg_id)
+            seen_fingerprints[_title_fingerprint(fresh["title"])] = fresh["title"]
             posts_made += 1
             time.sleep(2)
 
     return posts_made
+
+
+_POSITIVE_REACTIONS = {"🔥", "👍", "❤", "❤️", "🎉", "🤩"}
+_NEGATIVE_REACTIONS = {"👎", "🤮", "💩"}
+
+
+def poll_reactions():
+    """Busca updates de reações do Telegram e persiste contagens no banco."""
+    offset = get_reactions_offset()
+    updates, next_offset = fetch_reaction_updates(offset)
+    if next_offset != offset:
+        set_reactions_offset(next_offset)
+    for u in updates:
+        rc = u["message_reaction_count"]
+        msg_id = rc["message_id"]
+        positive = sum(
+            r["total_count"] for r in rc.get("reactions", [])
+            if r.get("type", {}).get("emoji") in _POSITIVE_REACTIONS
+        )
+        negative = sum(
+            r["total_count"] for r in rc.get("reactions", [])
+            if r.get("type", {}).get("emoji") in _NEGATIVE_REACTIONS
+        )
+        save_reactions(msg_id, positive, negative)
+        if positive or negative:
+            print(f"[Reactions] msg_id={msg_id} 👍{positive} 👎{negative}")
 
 
 def run_check():
@@ -255,4 +296,5 @@ def run_check():
         time.sleep(1)
 
     print(f"[Monitor] Verificação concluída. {total_posts} promoções postadas.")
+    poll_reactions()
     return total_posts
