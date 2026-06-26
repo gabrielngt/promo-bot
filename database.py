@@ -1,7 +1,7 @@
 import os
 import psycopg
 from psycopg.rows import dict_row
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -17,11 +17,89 @@ _DEFAULTS = {
 }
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def get_connection():
     # prepare_threshold=None desliga prepared statements no lado do cliente,
     # necessário para o transaction pooler do Supabase (porta 6543), que reusa
     # conexões entre transações. Inofensivo no session pooler.
     return psycopg.connect(DATABASE_URL, row_factory=dict_row, prepare_threshold=None)
+
+
+# Migrações idempotentes para bancos que antecedem o schema atual. Os blocos DO
+# checam o catálogo antes de agir, então rodam só uma vez e viram no-op (sem lock)
+# nos boots seguintes. Bancos novos já nascem com os tipos certos no CREATE TABLE.
+_TYPE_MIGRATION = """
+DO $$
+BEGIN
+  -- preços: real (4 bytes) -> double precision (8 bytes)
+  IF (SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='products' AND column_name='min_price')='real' THEN
+    ALTER TABLE products ALTER COLUMN min_price TYPE double precision;
+  END IF;
+  IF (SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='products' AND column_name='last_price')='real' THEN
+    ALTER TABLE products ALTER COLUMN last_price TYPE double precision;
+  END IF;
+  IF (SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='products' AND column_name='last_posted_price')='real' THEN
+    ALTER TABLE products ALTER COLUMN last_posted_price TYPE double precision;
+  END IF;
+  IF (SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='products' AND column_name='target_price')='real' THEN
+    ALTER TABLE products ALTER COLUMN target_price TYPE double precision;
+  END IF;
+  IF (SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='price_history' AND column_name='price')='real' THEN
+    ALTER TABLE price_history ALTER COLUMN price TYPE double precision;
+  END IF;
+
+  -- timestamps: text (ISO ingênuo, em UTC) -> timestamptz
+  IF (SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='products' AND column_name='last_checked')='text' THEN
+    ALTER TABLE products ALTER COLUMN last_checked TYPE timestamptz USING (NULLIF(last_checked,'')::timestamp AT TIME ZONE 'UTC');
+  END IF;
+  IF (SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='products' AND column_name='posted_at')='text' THEN
+    ALTER TABLE products ALTER COLUMN posted_at TYPE timestamptz USING (NULLIF(posted_at,'')::timestamp AT TIME ZONE 'UTC');
+  END IF;
+  IF (SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='price_history' AND column_name='checked_at')='text' THEN
+    ALTER TABLE price_history ALTER COLUMN checked_at TYPE timestamptz USING (NULLIF(checked_at,'')::timestamp AT TIME ZONE 'UTC');
+  END IF;
+
+  -- NOT NULL no histórico (limpa nulos antes)
+  IF (SELECT is_nullable FROM information_schema.columns WHERE table_schema='public' AND table_name='price_history' AND column_name='product_id')='YES' THEN
+    DELETE FROM price_history WHERE product_id IS NULL;
+    ALTER TABLE price_history ALTER COLUMN product_id SET NOT NULL;
+  END IF;
+  IF (SELECT is_nullable FROM information_schema.columns WHERE table_schema='public' AND table_name='price_history' AND column_name='price')='YES' THEN
+    DELETE FROM price_history WHERE price IS NULL;
+    ALTER TABLE price_history ALTER COLUMN price SET NOT NULL;
+  END IF;
+  IF (SELECT is_nullable FROM information_schema.columns WHERE table_schema='public' AND table_name='price_history' AND column_name='checked_at')='YES' THEN
+    DELETE FROM price_history WHERE checked_at IS NULL;
+    ALTER TABLE price_history ALTER COLUMN checked_at SET NOT NULL;
+  END IF;
+END $$;
+"""
+
+_FK_MIGRATION = """
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_price_history_product') THEN
+    DELETE FROM price_history WHERE product_id NOT IN (SELECT product_id FROM products);
+    ALTER TABLE price_history ADD CONSTRAINT fk_price_history_product
+      FOREIGN KEY (product_id) REFERENCES products(product_id) ON DELETE CASCADE;
+  END IF;
+END $$;
+"""
+
+_SCHEMA_MIGRATIONS = [
+    # colunas para bancos anteriores à watchlist
+    "ALTER TABLE products ADD COLUMN IF NOT EXISTS last_posted_price double precision",
+    "ALTER TABLE products ADD COLUMN IF NOT EXISTS link TEXT DEFAULT ''",
+    "ALTER TABLE products ADD COLUMN IF NOT EXISTS is_watched BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE products ADD COLUMN IF NOT EXISTS target_price double precision",
+    # acelera get_recent_min / get_price_history (filtram por product_id + checked_at)
+    "CREATE INDEX IF NOT EXISTS idx_price_history_product ON price_history (product_id, checked_at)",
+    _TYPE_MIGRATION,
+    _FK_MIGRATION,
+]
 
 
 def init_db(keyword_defaults: list[str] | None = None):
@@ -30,20 +108,22 @@ def init_db(keyword_defaults: list[str] | None = None):
             CREATE TABLE IF NOT EXISTS products (
                 product_id          TEXT PRIMARY KEY,
                 title               TEXT,
-                min_price           REAL,
-                last_price          REAL,
-                last_checked        TEXT,
-                posted_at           TEXT,
-                last_posted_price   REAL,
-                link                TEXT DEFAULT ''
+                min_price           double precision,
+                last_price          double precision,
+                last_checked        timestamptz,
+                posted_at           timestamptz,
+                last_posted_price   double precision,
+                link                TEXT DEFAULT '',
+                is_watched          BOOLEAN DEFAULT FALSE,
+                target_price        double precision
             )
         """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS price_history (
                 id          BIGSERIAL PRIMARY KEY,
-                product_id  TEXT,
-                price       REAL,
-                checked_at  TEXT
+                product_id  TEXT NOT NULL REFERENCES products(product_id) ON DELETE CASCADE,
+                price       double precision NOT NULL,
+                checked_at  timestamptz NOT NULL
             )
         """)
         conn.execute("""
@@ -52,15 +132,8 @@ def init_db(keyword_defaults: list[str] | None = None):
                 value   TEXT
             )
         """)
-        conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS last_posted_price REAL")
-        conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS link TEXT DEFAULT ''")
-        conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS is_watched BOOLEAN DEFAULT FALSE")
-        conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS target_price REAL")
-        # acelera get_recent_min / get_price_history (filtram por product_id + checked_at)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_price_history_product "
-            "ON price_history (product_id, checked_at)"
-        )
+        for stmt in _SCHEMA_MIGRATIONS:
+            conn.execute(stmt)
         defaults = dict(_DEFAULTS)
         if keyword_defaults:
             defaults["peripheral_keywords"] = "\n".join(keyword_defaults)
@@ -120,7 +193,7 @@ def update_settings(data: dict):
 # ---------- Products ----------
 
 def upsert_product(product_id: str, title: str, price: float, link: str = "") -> dict:
-    now = datetime.utcnow().isoformat()
+    now = _utcnow()
     with get_connection() as conn:
         row = conn.execute(
             "SELECT * FROM products WHERE product_id = %s", (product_id,)
@@ -157,8 +230,8 @@ def can_post(product_id: str, current_price: float = 0.0) -> bool:
         ).fetchone()
         if not row or not row["posted_at"]:
             return True
-        posted_at = datetime.fromisoformat(row["posted_at"])
-        elapsed = datetime.utcnow() - posted_at
+        posted_at = row["posted_at"]  # timestamptz -> datetime tz-aware
+        elapsed = _utcnow() - posted_at
         last_price = row["last_posted_price"]
 
         if last_price and abs(current_price - last_price) < 0.01 and elapsed < timedelta(hours=12):
@@ -168,7 +241,7 @@ def can_post(product_id: str, current_price: float = 0.0) -> bool:
 
 
 def mark_posted(product_id: str, price: float = 0.0):
-    now = datetime.utcnow().isoformat()
+    now = _utcnow()
     with get_connection() as conn:
         conn.execute(
             "UPDATE products SET posted_at=%s, last_posted_price=%s WHERE product_id=%s",
@@ -213,7 +286,7 @@ def set_target(product_id: str, target_price: float | None = None):
 
 def get_recent_min(product_id: str, days: int = 30) -> float | None:
     """Menor preço registrado nos últimos N dias (janela móvel). None se sem histórico."""
-    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    cutoff = _utcnow() - timedelta(days=days)
     with get_connection() as conn:
         row = conn.execute(
             "SELECT MIN(price) AS m FROM price_history "
@@ -224,19 +297,16 @@ def get_recent_min(product_id: str, days: int = 30) -> float | None:
 
 
 def delete_product(product_id: str) -> bool:
+    # price_history é removido em cascata pela FK
     with get_connection() as conn:
         cur = conn.execute("DELETE FROM products WHERE product_id = %s", (product_id,))
-        conn.execute("DELETE FROM price_history WHERE product_id = %s", (product_id,))
     return cur.rowcount > 0
 
 
 def clear_discovered() -> int:
-    """Remove todos os produtos auto-descobertos (não vigiados), mantendo a watchlist."""
+    """Remove todos os produtos auto-descobertos (não vigiados), mantendo a watchlist.
+    O histórico de preços sai em cascata pela FK."""
     with get_connection() as conn:
-        conn.execute(
-            "DELETE FROM price_history WHERE product_id IN "
-            "(SELECT product_id FROM products WHERE is_watched IS NOT TRUE)"
-        )
         cur = conn.execute("DELETE FROM products WHERE is_watched IS NOT TRUE")
     return cur.rowcount
 

@@ -120,7 +120,7 @@ const mapProduct = (p) => ({
   watched:    !!p.is_watched,
   target:     p.target_price ?? 0,
   lastPosted: p.posted_at
-    ? new Date(p.posted_at + "Z").toLocaleDateString("pt-BR")
+    ? new Date(p.posted_at).toLocaleDateString("pt-BR")
     : "—",
 });
 
