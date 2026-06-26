@@ -59,6 +59,10 @@ def _format_message(product: dict, drop_pct: float) -> str:
         else:
             lines.append(f"🚚 Frete grátis{prazo}")
 
+    seller_count = product.get("seller_count", 1)
+    if seller_count > 1:
+        lines.append(f"🔎 Menor preço entre {seller_count} anúncios")
+
     lines += [
         f"🇧🇷 Sem II federal · ICMS ~20% incluso",
         "",

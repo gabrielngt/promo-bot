@@ -1,5 +1,5 @@
 from config import CATEGORIES, PRODUCTS_PER_CATEGORY
-from aliexpress import get_hot_products, get_products_by_brand, parse_product, get_shipping, get_product_detail
+from aliexpress import get_hot_products, get_products_by_brand, parse_product, get_shipping, get_product_detail, search_products
 from database import upsert_product, can_post, mark_posted, get_settings, get_watchlist
 from telegram_bot import post_product
 
@@ -46,6 +46,44 @@ def _passes_quality(product: dict) -> bool:
 def _title_fingerprint(title: str) -> str:
     words = sorted(re.findall(r'[a-z0-9]{3,}', title.lower()))
     return "".join(words)[:60]
+
+
+def _title_words(title: str) -> set:
+    return set(re.findall(r'[a-z0-9]{3,}', title.lower()))
+
+
+def _title_similarity(a: str, b: str) -> float:
+    """Similaridade de Jaccard entre os conjuntos de palavras de dois títulos (0 a 1)."""
+    wa, wb = _title_words(a), _title_words(b)
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
+# Quão parecido um anúncio de outro vendedor precisa ser para contar como o
+# "mesmo produto". Mais alto = menos falsos positivos, menos equivalentes achados.
+EQUIVALENT_MIN_SIMILARITY = 0.5
+
+
+def _cheapest_equivalent(product: dict) -> dict:
+    """Busca anúncios equivalentes (outros vendedores) e retorna o mais barato entre
+    eles e o próprio produto. Marca seller_count com quantos anúncios entraram na conta."""
+    candidates = [product]
+    for raw in search_products(product["title"]):
+        if str(raw.get("product_id")) == product["product_id"]:
+            continue
+        alt = parse_product(raw)
+        if not alt or alt["price"] <= 0:
+            continue
+        # guarda contra acessórios/capas: preço absurdamente menor não é o mesmo item
+        if alt["price"] < product["price"] * 0.3:
+            continue
+        if _title_similarity(product["title"], alt["title"]) >= EQUIVALENT_MIN_SIMILARITY:
+            candidates.append(alt)
+
+    best = min(candidates, key=lambda p: p["price"])
+    best["seller_count"] = len(candidates)
+    return best
 
 
 def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_products_override: list = None, seen_fingerprints: dict = None) -> int:
@@ -133,8 +171,13 @@ def check_watchlist(settings: dict, max_posts: int, seen_fingerprints: dict) -> 
         if not fresh:
             continue
 
-        state = upsert_product(fresh["product_id"], fresh["title"], fresh["price"], fresh.get("link", ""))
-        current = fresh["price"]
+        # busca anúncios equivalentes (outros vendedores) e fica com o mais barato
+        best = _cheapest_equivalent(fresh)
+        current = best["price"]
+
+        # histórico e cooldown ficam sob o produto vigiado (1 linha no banco),
+        # mas o preço/link rastreados são os do anúncio mais barato encontrado.
+        state = upsert_product(fresh["product_id"], fresh["title"], current, best.get("link", ""))
         target = item.get("target_price")
         min_price = state["min_price"]
         drop_pct = (min_price - current) / min_price * 100 if min_price > 0 else 0.0
@@ -147,9 +190,10 @@ def check_watchlist(settings: dict, max_posts: int, seen_fingerprints: dict) -> 
         if not can_post(fresh["product_id"], current):
             continue
 
+        alt_note = f" | {best['seller_count']} anúncios" if best.get("seller_count", 1) > 1 else ""
         motivo = f"atingiu alvo R$ {target:.2f}" if hit_target else "queda vs mínimo"
-        print(f"[Monitor] Watchlist ({motivo}): {fresh['title'][:50]} | R$ {current:.2f}")
-        if _post_with_shipping(fresh, drop_pct):
+        print(f"[Monitor] Watchlist ({motivo}): {fresh['title'][:50]} | R$ {current:.2f}{alt_note}")
+        if _post_with_shipping(best, drop_pct):
             mark_posted(fresh["product_id"], current)
             seen_fingerprints[_title_fingerprint(fresh["title"])] = True
             posts_made += 1

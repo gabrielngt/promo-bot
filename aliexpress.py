@@ -108,6 +108,11 @@ def get_products_by_brand(brand: str, page_size: int = 50) -> list[dict]:
     return _query_products(keywords=brand, page_size=page_size)
 
 
+def search_products(keywords: str, page_size: int = 20) -> list[dict]:
+    """Busca anúncios por texto livre — usado para achar equivalentes de um produto vigiado."""
+    return _query_products(keywords=keywords, page_size=page_size)
+
+
 def _query_products(keywords: str = "", page: int = 1, page_size: int = 50) -> list[dict]:
     """Standard API: aliexpress.affiliate.product.query (busca por keyword)."""
     params = _base_params("aliexpress.affiliate.product.query")
