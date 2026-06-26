@@ -203,7 +203,18 @@ function Login({ onLogin }) {
 }
 
 /* ── Tabela de produtos (reutilizada na watchlist e nos descobertos) ── */
-function ProductTable({ rows, onDelete, onEditTarget }) {
+function ProductTable({ rows, onDelete, onSaveTarget }) {
+  const [editingId, setEditingId] = useState(null);
+  const [editVal, setEditVal] = useState("");
+
+  const save = (p) => {
+    const t = editVal.trim();
+    const val = t === "" ? null : Number(t.replace(",", "."));
+    if (val !== null && (isNaN(val) || val < 0)) return;
+    onSaveTarget(p.id, val);
+    setEditingId(null);
+  };
+
   return (
     <table>
       <thead>
@@ -233,7 +244,14 @@ function ProductTable({ rows, onDelete, onEditTarget }) {
               </td>
               <td className="num-col price">{fmt(p.current)}</td>
               <td className="num-col price price-min">{fmt(p.min)}</td>
-              <td className="num-col price">{p.target > 0 ? fmt(p.target) : "—"}</td>
+              <td className="num-col price">
+                {editingId === p.id ? (
+                  <input className="input mono target-input" type="number" min="0" step="0.01" autoFocus
+                    value={editVal} onChange={(e) => setEditVal(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") save(p); if (e.key === "Escape") setEditingId(null); }}
+                    placeholder="—" />
+                ) : (p.target > 0 ? fmt(p.target) : "—")}
+              </td>
               <td className="num-col">
                 {p.drop_pct === 0 ? (
                   <span className="drop-badge flat">—</span>
@@ -245,16 +263,24 @@ function ProductTable({ rows, onDelete, onEditTarget }) {
               </td>
               <td className="muted-cell">{p.lastPosted}</td>
               <td className="actions-col">
-                {p.watched && onEditTarget && (
-                  <button className="btn btn-ghost" title="Editar preço-alvo"
-                    onClick={() => onEditTarget(p)} aria-label="Editar preço-alvo">
-                    <Icon.edit />
-                  </button>
+                {editingId === p.id ? (
+                  <>
+                    <button className="btn btn-ghost" title="Salvar"
+                      onClick={() => save(p)} aria-label="Salvar"><Icon.check /></button>
+                    <button className="btn btn-ghost-danger" title="Cancelar"
+                      onClick={() => setEditingId(null)} aria-label="Cancelar"><Icon.x /></button>
+                  </>
+                ) : (
+                  <>
+                    {p.watched && onSaveTarget && (
+                      <button className="btn btn-ghost" title="Editar preço-alvo"
+                        onClick={() => { setEditingId(p.id); setEditVal(p.target > 0 ? String(p.target) : ""); }}
+                        aria-label="Editar preço-alvo"><Icon.edit /></button>
+                    )}
+                    <button className="btn btn-ghost-danger" title="Remover produto"
+                      onClick={() => onDelete(p.id)} aria-label="Remover"><Icon.trash /></button>
+                  </>
                 )}
-                <button className="btn btn-ghost-danger" title="Remover produto"
-                  onClick={() => onDelete(p.id)} aria-label="Remover">
-                  <Icon.trash />
-                </button>
               </td>
             </tr>
           );
@@ -312,17 +338,9 @@ function Produtos({ api, showToast }) {
     }
   };
 
-  const handleEditTarget = async (p) => {
-    const input = prompt(`Preço-alvo para "${p.name}" (vazio = sem alvo):`, p.target > 0 ? p.target : "");
-    if (input === null) return; // cancelou
-    const trimmed = input.trim();
-    const target = trimmed === "" ? null : Number(trimmed.replace(",", "."));
-    if (target !== null && (isNaN(target) || target < 0)) {
-      showToast("Valor inválido.", "err");
-      return;
-    }
+  const handleSaveTarget = async (id, target) => {
     try {
-      await api.setTarget(p.id, target);
+      await api.setTarget(id, target);
       showToast(target === null ? "Preço-alvo removido." : "Preço-alvo atualizado.");
       load();
     } catch (err) {
@@ -353,7 +371,7 @@ function Produtos({ api, showToast }) {
             {watched.length === 0 ? (
               <div className="empty"><div className="empty-sub">Nenhum produto vigiado. Adicione um na aba "Adicionar produto".</div></div>
             ) : (
-              <ProductTable rows={watched} onDelete={handleDelete} onEditTarget={handleEditTarget} />
+              <ProductTable rows={watched} onDelete={handleDelete} onSaveTarget={handleSaveTarget} />
             )}
           </div>
 
