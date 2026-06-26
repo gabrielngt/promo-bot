@@ -69,6 +69,7 @@ function makeApi(baseUrl, apiKey) {
     products:      ()           => req("GET",    "/api/products"),
     addProduct:    (url_or_id, target_price) => req("POST", "/api/products", { url_or_id, target_price }),
     deleteProduct: (id)         => req("DELETE", `/api/products/${id}`),
+    clearDiscovered: ()         => req("DELETE", "/api/products/discovered"),
     getSettings:   ()           => req("GET",    "/api/settings"),
     saveSettings:  (d)          => req("PUT",    "/api/settings", d),
   };
@@ -194,10 +195,67 @@ function Login({ onLogin }) {
   );
 }
 
+/* ── Tabela de produtos (reutilizada na watchlist e nos descobertos) ── */
+function ProductTable({ rows, onDelete }) {
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>Produto</th>
+          <th className="num-col">Preço atual</th>
+          <th className="num-col">Preço mínimo</th>
+          <th className="num-col">Alvo</th>
+          <th className="num-col">Queda</th>
+          <th>Último post</th>
+          <th className="actions-col"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((p) => {
+          const below = p.drop_pct > 0;
+          return (
+            <tr key={p.id}>
+              <td>
+                {p.link
+                  ? <a className="prod-name" href={p.link} target="_blank" rel="noopener noreferrer">{p.name}</a>
+                  : <div className="prod-name">{p.name}</div>}
+                <div className="prod-id">
+                  #{p.id}
+                  {p.watched && <span className="watch-badge" title="Vigiado pela watchlist">👁 vigiado</span>}
+                </div>
+              </td>
+              <td className="num-col price">{fmt(p.current)}</td>
+              <td className="num-col price price-min">{fmt(p.min)}</td>
+              <td className="num-col price">{p.target > 0 ? fmt(p.target) : "—"}</td>
+              <td className="num-col">
+                {p.drop_pct === 0 ? (
+                  <span className="drop-badge flat">—</span>
+                ) : (
+                  <span className={"drop-badge" + (below ? "" : " flat")}>
+                    {below ? "−" : "+"}{Math.abs(p.drop_pct).toFixed(1)}%
+                  </span>
+                )}
+              </td>
+              <td className="muted-cell">{p.lastPosted}</td>
+              <td className="actions-col">
+                <button className="btn btn-ghost-danger" title="Remover produto"
+                  onClick={() => onDelete(p.id)} aria-label="Remover">
+                  <Icon.trash />
+                </button>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
 /* ── Produtos ── */
 function Produtos({ api, showToast }) {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [clearing, setClearing] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -223,83 +281,68 @@ function Produtos({ api, showToast }) {
     }
   };
 
+  const watched = products.filter((p) => p.watched);
+  const discovered = products.filter((p) => !p.watched);
+
+  const handleClearDiscovered = async () => {
+    if (discovered.length === 0) return;
+    if (!confirm(`Excluir os ${discovered.length} produtos descobertos automaticamente? A watchlist é mantida.`)) return;
+    setClearing(true);
+    try {
+      const r = await api.clearDiscovered();
+      showToast(`${r.deleted} produtos removidos.`);
+      load();
+    } catch (err) {
+      showToast("Erro ao limpar: " + err.message, "err");
+    } finally {
+      setClearing(false);
+    }
+  };
+
   return (
     <div className="page">
       <div className="page-head" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
         <div>
-          <div className="page-title">
-            Produtos
-            {products.length > 0 && <span className="count-pill">{products.length}</span>}
-          </div>
-          <div className="page-desc">Produtos monitorados pelo bot. Postagem automática quando o preço cai abaixo do mínimo histórico.</div>
+          <div className="page-title">Produtos</div>
+          <div className="page-desc">Watchlist são os itens que você adiciona à mão. Descobertos são achados automaticamente pelo bot.</div>
         </div>
         <button className="btn btn-secondary" onClick={load} disabled={loading} style={{ marginTop: 2 }}>
           <Icon.refresh /> Atualizar
         </button>
       </div>
 
-      <div className="card table-card">
-        {loading ? (
-          <div className="empty"><div className="empty-sub">Carregando...</div></div>
-        ) : products.length === 0 ? (
-          <div className="empty">
-            <div className="empty-icon"><Icon.box /></div>
-            <div className="empty-title">Nenhum produto ainda.</div>
-            <div className="empty-sub">Adicione um produto na aba "Adicionar produto".</div>
+      {loading ? (
+        <div className="card table-card"><div className="empty"><div className="empty-sub">Carregando...</div></div></div>
+      ) : (
+        <>
+          <div className="section-head">
+            <div className="section-title">👁 Watchlist {watched.length > 0 && <span className="count-pill">{watched.length}</span>}</div>
           </div>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Produto</th>
-                <th className="num-col">Preço atual</th>
-                <th className="num-col">Preço mínimo</th>
-                <th className="num-col">Alvo</th>
-                <th className="num-col">Queda</th>
-                <th>Último post</th>
-                <th className="actions-col"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {products.map((p) => {
-                const below = p.drop_pct > 0;
-                return (
-                  <tr key={p.id}>
-                    <td>
-                      {p.link
-                        ? <a className="prod-name" href={p.link} target="_blank" rel="noopener noreferrer">{p.name}</a>
-                        : <div className="prod-name">{p.name}</div>}
-                      <div className="prod-id">
-                        #{p.id}
-                        {p.watched && <span className="watch-badge" title="Vigiado pela watchlist">👁 vigiado</span>}
-                      </div>
-                    </td>
-                    <td className="num-col price">{fmt(p.current)}</td>
-                    <td className="num-col price price-min">{fmt(p.min)}</td>
-                    <td className="num-col price">{p.target > 0 ? fmt(p.target) : "—"}</td>
-                    <td className="num-col">
-                      {p.drop_pct === 0 ? (
-                        <span className="drop-badge flat">—</span>
-                      ) : (
-                        <span className={"drop-badge" + (below ? "" : " flat")}>
-                          {below ? "−" : "+"}{Math.abs(p.drop_pct).toFixed(1)}%
-                        </span>
-                      )}
-                    </td>
-                    <td className="muted-cell">{p.lastPosted}</td>
-                    <td className="actions-col">
-                      <button className="btn btn-ghost-danger" title="Remover produto"
-                        onClick={() => handleDelete(p.id)} aria-label="Remover">
-                        <Icon.trash />
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
+          <div className="card table-card">
+            {watched.length === 0 ? (
+              <div className="empty"><div className="empty-sub">Nenhum produto vigiado. Adicione um na aba "Adicionar produto".</div></div>
+            ) : (
+              <ProductTable rows={watched} onDelete={handleDelete} />
+            )}
+          </div>
+
+          <div className="section-head" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div className="section-title">🔍 Descobertos automaticamente {discovered.length > 0 && <span className="count-pill">{discovered.length}</span>}</div>
+            {discovered.length > 0 && (
+              <button className="btn btn-ghost-danger" onClick={handleClearDiscovered} disabled={clearing}>
+                <Icon.trash /> {clearing ? "Limpando..." : "Limpar lista"}
+              </button>
+            )}
+          </div>
+          <div className="card table-card">
+            {discovered.length === 0 ? (
+              <div className="empty"><div className="empty-sub">Nenhum produto descoberto no momento.</div></div>
+            ) : (
+              <ProductTable rows={discovered} onDelete={handleDelete} />
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

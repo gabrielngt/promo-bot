@@ -205,6 +205,17 @@ def delete_product(product_id: str) -> bool:
     return cur.rowcount > 0
 
 
+def clear_discovered() -> int:
+    """Remove todos os produtos auto-descobertos (não vigiados), mantendo a watchlist."""
+    with get_connection() as conn:
+        conn.execute(
+            "DELETE FROM price_history WHERE product_id IN "
+            "(SELECT product_id FROM products WHERE is_watched IS NOT TRUE)"
+        )
+        cur = conn.execute("DELETE FROM products WHERE is_watched IS NOT TRUE")
+    return cur.rowcount
+
+
 def get_price_history(product_id: str) -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
