@@ -56,6 +56,11 @@ def init_db(keyword_defaults: list[str] | None = None):
         conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS link TEXT DEFAULT ''")
         conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS is_watched BOOLEAN DEFAULT FALSE")
         conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS target_price REAL")
+        # acelera get_recent_min / get_price_history (filtram por product_id + checked_at)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_price_history_product "
+            "ON price_history (product_id, checked_at)"
+        )
         defaults = dict(_DEFAULTS)
         if keyword_defaults:
             defaults["peripheral_keywords"] = "\n".join(keyword_defaults)
