@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from database import (
     get_all_products, delete_product, get_price_history,
-    get_settings, update_settings, upsert_product, set_watch, clear_discovered,
+    get_settings, update_settings, upsert_product, set_watch, set_target, clear_discovered,
 )
 from aliexpress import extract_product_id, get_product_detail
 
@@ -87,6 +87,16 @@ def add_product(body: AddProductRequest, key: str = Security(require_auth)):
 def clear_discovered_products(key: str = Security(require_auth)):
     n = clear_discovered()
     return {"message": f"{n} produtos descobertos removidos", "deleted": n}
+
+
+class TargetRequest(BaseModel):
+    target_price: float | None = None
+
+
+@app.put("/api/products/{product_id}/target")
+def update_target(product_id: str, body: TargetRequest, key: str = Security(require_auth)):
+    set_target(product_id, body.target_price)
+    return {"message": "Preço-alvo atualizado", "target_price": body.target_price}
 
 
 @app.delete("/api/products/{product_id}")

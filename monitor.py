@@ -1,6 +1,6 @@
 from config import CATEGORIES, PRODUCTS_PER_CATEGORY
 from aliexpress import get_hot_products, get_products_by_brand, parse_product, get_shipping, get_product_detail, search_products
-from database import upsert_product, can_post, mark_posted, get_settings, get_watchlist
+from database import upsert_product, can_post, mark_posted, get_settings, get_watchlist, get_recent_min
 from telegram_bot import post_product
 
 import re
@@ -175,12 +175,16 @@ def check_watchlist(settings: dict, max_posts: int, seen_fingerprints: dict) -> 
         best = _cheapest_equivalent(fresh)
         current = best["price"]
 
+        # baseline = menor preço dos últimos 30 dias (janela móvel), lido ANTES de
+        # gravar a leitura de agora — evita que a régua só caia e trave o item.
+        recent_min = get_recent_min(fresh["product_id"], days=30)
+
         # histórico e cooldown ficam sob o produto vigiado (1 linha no banco),
         # mas o preço/link rastreados são os do anúncio mais barato encontrado.
-        state = upsert_product(fresh["product_id"], fresh["title"], current, best.get("link", ""))
+        upsert_product(fresh["product_id"], fresh["title"], current, best.get("link", ""))
         target = item.get("target_price")
-        min_price = state["min_price"]
-        drop_pct = (min_price - current) / min_price * 100 if min_price > 0 else 0.0
+        baseline = recent_min if recent_min is not None else current
+        drop_pct = (baseline - current) / baseline * 100 if baseline > 0 else 0.0
 
         hit_target = target is not None and current <= target
         is_drop = drop_pct >= threshold

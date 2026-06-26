@@ -198,6 +198,26 @@ def get_watchlist() -> list[dict]:
     return list(rows)
 
 
+def set_target(product_id: str, target_price: float | None = None):
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE products SET target_price = %s WHERE product_id = %s",
+            (target_price, product_id),
+        )
+
+
+def get_recent_min(product_id: str, days: int = 30) -> float | None:
+    """Menor preço registrado nos últimos N dias (janela móvel). None se sem histórico."""
+    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT MIN(price) AS m FROM price_history "
+            "WHERE product_id = %s AND checked_at >= %s",
+            (product_id, cutoff),
+        ).fetchone()
+    return row["m"] if row and row["m"] is not None else None
+
+
 def delete_product(product_id: str) -> bool:
     with get_connection() as conn:
         cur = conn.execute("DELETE FROM products WHERE product_id = %s", (product_id,))

@@ -23,6 +23,12 @@ const Icon = {
       <path d="M12 5v14M5 12h14"/>
     </svg>
   ),
+  edit: (p) => (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}>
+      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+      <path d="M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+    </svg>
+  ),
   x: (p) => (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" {...p}>
       <path d="M6 6l12 12M18 6L6 18"/>
@@ -70,6 +76,7 @@ function makeApi(baseUrl, apiKey) {
     addProduct:    (url_or_id, target_price) => req("POST", "/api/products", { url_or_id, target_price }),
     deleteProduct: (id)         => req("DELETE", `/api/products/${id}`),
     clearDiscovered: ()         => req("DELETE", "/api/products/discovered"),
+    setTarget:     (id, target_price) => req("PUT", `/api/products/${id}/target`, { target_price }),
     getSettings:   ()           => req("GET",    "/api/settings"),
     saveSettings:  (d)          => req("PUT",    "/api/settings", d),
   };
@@ -196,7 +203,7 @@ function Login({ onLogin }) {
 }
 
 /* ── Tabela de produtos (reutilizada na watchlist e nos descobertos) ── */
-function ProductTable({ rows, onDelete }) {
+function ProductTable({ rows, onDelete, onEditTarget }) {
   return (
     <table>
       <thead>
@@ -238,6 +245,12 @@ function ProductTable({ rows, onDelete }) {
               </td>
               <td className="muted-cell">{p.lastPosted}</td>
               <td className="actions-col">
+                {p.watched && onEditTarget && (
+                  <button className="btn btn-ghost" title="Editar preço-alvo"
+                    onClick={() => onEditTarget(p)} aria-label="Editar preço-alvo">
+                    <Icon.edit />
+                  </button>
+                )}
                 <button className="btn btn-ghost-danger" title="Remover produto"
                   onClick={() => onDelete(p.id)} aria-label="Remover">
                   <Icon.trash />
@@ -299,6 +312,24 @@ function Produtos({ api, showToast }) {
     }
   };
 
+  const handleEditTarget = async (p) => {
+    const input = prompt(`Preço-alvo para "${p.name}" (vazio = sem alvo):`, p.target > 0 ? p.target : "");
+    if (input === null) return; // cancelou
+    const trimmed = input.trim();
+    const target = trimmed === "" ? null : Number(trimmed.replace(",", "."));
+    if (target !== null && (isNaN(target) || target < 0)) {
+      showToast("Valor inválido.", "err");
+      return;
+    }
+    try {
+      await api.setTarget(p.id, target);
+      showToast(target === null ? "Preço-alvo removido." : "Preço-alvo atualizado.");
+      load();
+    } catch (err) {
+      showToast("Erro: " + err.message, "err");
+    }
+  };
+
   return (
     <div className="page">
       <div className="page-head" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
@@ -322,7 +353,7 @@ function Produtos({ api, showToast }) {
             {watched.length === 0 ? (
               <div className="empty"><div className="empty-sub">Nenhum produto vigiado. Adicione um na aba "Adicionar produto".</div></div>
             ) : (
-              <ProductTable rows={watched} onDelete={handleDelete} />
+              <ProductTable rows={watched} onDelete={handleDelete} onEditTarget={handleEditTarget} />
             )}
           </div>
 
