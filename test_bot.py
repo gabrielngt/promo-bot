@@ -7,36 +7,35 @@ import os
 sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, os.path.dirname(__file__))
 
+from dotenv import load_dotenv
+load_dotenv()
+
 
 def test_database():
     print("\n--- Teste: database ---")
-    import database
-    from database import init_db, upsert_product, can_post, mark_posted
+    from database import init_db, upsert_product, can_post, mark_posted, delete_product
 
-    database.DB_PATH = "test_promo_bot.db"
-    if os.path.exists("test_promo_bot.db"):
-        os.remove("test_promo_bot.db")
     init_db()
 
     # produto novo
-    state = upsert_product("PROD001", "Teclado Mecânico RGB", 299.90)
+    state = upsert_product("TEST_PROD001", "Teclado Mecânico RGB", 299.90)
     assert state["is_new"] is True
     assert state["min_price"] == 299.90
     print(f"  ✅ Produto novo inserido. min_price={state['min_price']}")
 
     # mesmo produto, preço menor
-    state2 = upsert_product("PROD001", "Teclado Mecânico RGB", 249.90)
+    state2 = upsert_product("TEST_PROD001", "Teclado Mecânico RGB", 249.90)
     assert state2["is_new"] is False
     assert state2["min_price"] == 299.90, "min_price deve ser o valor antes desta atualização"
     print(f"  ✅ Atualização OK. min_price histórico={state2['min_price']}, preço atual=249.90")
 
     # pode postar: nunca postado
-    assert can_post("PROD001") is True
+    assert can_post("TEST_PROD001") is True
     print("  ✅ can_post → True (nunca postado)")
 
     # após postar, não pode repostar imediatamente
-    mark_posted("PROD001")
-    assert can_post("PROD001") is False
+    mark_posted("TEST_PROD001")
+    assert can_post("TEST_PROD001") is False
     print("  ✅ can_post → False (recém postado)")
 
     # calcula queda de preço corretamente
@@ -44,11 +43,7 @@ def test_database():
     assert abs(drop_pct - 16.67) < 0.1, f"Expected ~16.67%, got {drop_pct:.2f}%"
     print(f"  ✅ Cálculo de queda: -{drop_pct:.2f}% (esperado ~16.67%)")
 
-    try:
-        import gc; gc.collect()
-        os.remove("test_promo_bot.db")
-    except PermissionError:
-        pass
+    delete_product("TEST_PROD001")
     print("  ✅ Database OK")
 
 
@@ -141,16 +136,12 @@ def test_telegram_message_format():
 def test_cold_start_logic():
     print("\n--- Teste: cold start logic ---")
     # simula o fluxo do monitor para produto novo com desconto alto
-    import database
-    from database import init_db, upsert_product, can_post
+    from database import init_db, upsert_product, can_post, get_settings, delete_product
 
-    database.DB_PATH = "test_cold.db"
-    if os.path.exists("test_cold.db"):
-        os.remove("test_cold.db")
     init_db()
 
     product = {
-        "product_id": "COLD001",
+        "product_id": "TEST_COLD001",
         "title": "Produto novo com desconto alto",
         "price": 50.0,
         "original_price": 100.0,
@@ -165,24 +156,20 @@ def test_cold_start_logic():
     assert state["is_new"] is True
 
     # lógica do monitor: cold start com desconto >= cold_start_threshold (default 30%)
-    from database import get_settings
     cold_threshold = get_settings()["cold_start_threshold"] * 100
     should_post = state["is_new"] and product["discount_pct"] >= cold_threshold and can_post(product["product_id"])
     assert should_post is True
     print(f"  ✅ Cold start com {product['discount_pct']}% desconto → posta ✓")
 
     # produto novo com desconto baixo → NÃO deve postar
-    product2 = {**product, "product_id": "COLD002", "discount_pct": 10.0}
+    product2 = {**product, "product_id": "TEST_COLD002", "discount_pct": 10.0}
     state2 = upsert_product(product2["product_id"], product2["title"], product2["price"])
     should_post2 = state2["is_new"] and product2["discount_pct"] >= cold_threshold
     assert should_post2 is False
     print(f"  ✅ Cold start com {product2['discount_pct']}% desconto → não posta ✓")
 
-    try:
-        import gc; gc.collect()
-        os.remove("test_cold.db")
-    except PermissionError:
-        pass
+    delete_product("TEST_COLD001")
+    delete_product("TEST_COLD002")
     print("  ✅ Cold start logic OK")
 
 
