@@ -53,8 +53,7 @@ def main():
     print("  Promo Bot - AliExpress → Telegram", flush=True)
     print("=" * 50, flush=True)
 
-    from database import DB_PATH
-    print(f"[Init] Banco de dados: {DB_PATH}", flush=True)
+    print("[Init] Banco de dados: Supabase (Postgres)", flush=True)
     init_db(keyword_defaults=PERIPHERAL_KEYWORDS)
     print("[Init] Banco OK", flush=True)
 
