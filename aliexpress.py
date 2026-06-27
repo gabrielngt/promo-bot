@@ -275,6 +275,15 @@ def extract_product_id(url_or_id: str) -> str | None:
     match = re.search(r"/i/(\d+)", s)
     if match:
         return match.group(1)
+    # link curto (s.click.aliexpress.com, a.aliexpress.com, etc.) — resolve redirect
+    if s.startswith("http"):
+        try:
+            resp = requests.head(s, allow_redirects=True, timeout=5)
+            m = re.search(r"/item/(\d+)", resp.url)
+            if m:
+                return m.group(1)
+        except Exception:
+            pass
     return None
 
 

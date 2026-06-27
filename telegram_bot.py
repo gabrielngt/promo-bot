@@ -1,3 +1,4 @@
+import html
 import re
 import time
 import requests
@@ -21,7 +22,8 @@ def _format_message(product: dict, drop_pct: float) -> str:
     original_price = product["original_price"]
     coupon = product.get("coupon")
 
-    title = product["title"][:150]  # caption Telegram: limite 1024 chars
+    title = html.escape(product["title"][:150])  # caption Telegram: limite 1024 chars
+    link = html.escape(product["link"])
 
     lines = [
         "🔥 <b>PROMOÇÃO ALIEXPRESS</b>",
@@ -33,7 +35,7 @@ def _format_message(product: dict, drop_pct: float) -> str:
     ]
 
     if coupon:
-        code = coupon["code"]
+        code = html.escape(coupon["code"])
         if coupon["applicable"]:
             lines.append(
                 f"🎟 Cupom <code>{code}</code>: -{_brl(coupon['discount'])} → "
@@ -68,7 +70,7 @@ def _format_message(product: dict, drop_pct: float) -> str:
         "",
         f"{stars} {product['rating']:.1f}/5  |  📦 {sales_fmt} vendidos",
         "",
-        f'👉 <a href="{product["link"]}">Comprar no AliExpress</a>',
+        f'👉 <a href="{link}">Comprar no AliExpress</a>',
     ]
 
     return "\n".join(lines)

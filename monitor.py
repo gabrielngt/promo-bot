@@ -36,7 +36,14 @@ def _matches_brand(title: str, brands: list) -> bool:
     if not brands:
         return True
     t = title.lower()
-    return any(entry["name"].lower() in t for entry in brands)
+    for entry in brands:
+        if entry["name"].lower() in t:
+            kw_filter = entry.get("keywords", [])
+            if not kw_filter:
+                return True
+            if any(kw.lower() in t for kw in kw_filter):
+                return True
+    return False
 
 
 def _passes_quality(product: dict) -> bool:

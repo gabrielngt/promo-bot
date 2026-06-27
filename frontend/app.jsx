@@ -91,18 +91,22 @@ const serializeBrand = (b) =>
   b.keywords.length > 0 ? `${b.name}:${b.keywords.join(",")}` : b.name;
 
 const fromApi = (s) => ({
-  minDrop:   Math.round((s.price_drop_threshold  ?? 0.15) * 100),
-  interval:  s.check_interval_minutes ?? 60,
-  minDays:   s.min_repost_days        ?? 7,
-  keywords:  s.peripheral_keywords    ?? [],
-  blacklist: s.keyword_blacklist      ?? [],
-  brands:    (s.brand_whitelist ?? []).map(entry =>
+  minDrop:    Math.round((s.price_drop_threshold ?? 0.15) * 100),
+  coldStart:  Math.round((s.cold_start_threshold ?? 0.30) * 100),
+  interval:   s.check_interval_minutes ?? 60,
+  maxPosts:   s.max_posts_per_cycle    ?? 5,
+  minDays:    s.min_repost_days        ?? 7,
+  keywords:   s.peripheral_keywords   ?? [],
+  blacklist:  s.keyword_blacklist      ?? [],
+  brands:     (s.brand_whitelist ?? []).map(entry =>
     typeof entry === "string" ? parseBrandStr(entry) : entry
   ),
 });
 const toApi = (s) => ({
   price_drop_threshold:   s.minDrop / 100,
+  cold_start_threshold:   s.coldStart / 100,
   check_interval_minutes: Number(s.interval),
+  max_posts_per_cycle:    Number(s.maxPosts),
   min_repost_days:        Number(s.minDays),
   peripheral_keywords:    s.keywords,
   keyword_blacklist:      s.blacklist,
@@ -569,7 +573,15 @@ function Configuracoes({ api, showToast }) {
           <NumberSetting
             label="Queda mínima de preço (%)"
             hint="Só posta quando o preço cair pelo menos esse percentual em relação ao mínimo histórico."
-            value={draft.minDrop} suffix="%" onChange={(v) => set({ minDrop: v })} />
+            value={draft.minDrop} suffix="%" onChange={(v) => set({ minDrop: v })} min={1} />
+          <NumberSetting
+            label="Desconto mínimo para novos produtos (%)"
+            hint="Para produtos sem histórico de preço, só posta se o desconto sobre o original for pelo menos esse valor."
+            value={draft.coldStart} suffix="%" onChange={(v) => set({ coldStart: v })} min={1} />
+          <NumberSetting
+            label="Máximo de posts por ciclo"
+            hint="Limite de produtos postados a cada verificação."
+            value={draft.maxPosts} suffix="posts" onChange={(v) => set({ maxPosts: v })} min={1} />
           <NumberSetting
             label="Intervalo de verificação (minutos)"
             hint="Com que frequência o bot consulta os preços na AliExpress."

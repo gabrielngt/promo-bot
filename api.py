@@ -2,7 +2,8 @@ import os
 from fastapi import FastAPI, HTTPException, Security
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Annotated
 
 from database import (
     get_all_products, delete_product, get_price_history,
@@ -114,14 +115,14 @@ def read_settings(key: str = Security(require_auth)):
 
 
 class SettingsRequest(BaseModel):
-    price_drop_threshold: float | None = None
-    cold_start_threshold: float | None = None
-    check_interval_minutes: int | None = None
-    min_repost_days: int | None = None
-    max_posts_per_cycle: int | None = None
-    peripheral_keywords: list[str] | None = None
-    brand_whitelist: list[str] | None = None
-    keyword_blacklist: list[str] | None = None
+    price_drop_threshold:   Annotated[float, Field(gt=0, le=1)] | None = None
+    cold_start_threshold:   Annotated[float, Field(gt=0, le=1)] | None = None
+    check_interval_minutes: Annotated[int,   Field(ge=1)]       | None = None
+    min_repost_days:        Annotated[int,   Field(ge=0)]       | None = None
+    max_posts_per_cycle:    Annotated[int,   Field(ge=1)]       | None = None
+    peripheral_keywords:    list[str] | None = None
+    brand_whitelist:        list[str] | None = None
+    keyword_blacklist:      list[str] | None = None
 
 
 @app.put("/api/settings")

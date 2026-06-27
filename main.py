@@ -6,7 +6,7 @@ import threading
 import uvicorn
 
 from config import (
-    TELEGRAM_CHANNEL_ID,
+    TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID,
     ALIEXPRESS_APP_KEY, ALIEXPRESS_APP_SECRET, ALIEXPRESS_TRACKING_ID, ADMIN_API_KEY,
     PERIPHERAL_KEYWORDS,
 )
@@ -15,17 +15,18 @@ from monitor import run_check
 from telegram_bot import test_connection
 from api import app as fastapi_app
 
-_PLACEHOLDER = "PREENCHER_DEPOIS"
+_PLACEHOLDERS = {"PREENCHER_DEPOIS", "SEU_TOKEN_AQUI", "SEU_APP_KEY", "SEU_APP_SECRET", "SEU_TRACKING_ID"}
 
 
 def _missing_credentials():
     checks = {
+        "TELEGRAM_BOT_TOKEN": TELEGRAM_BOT_TOKEN,
         "TELEGRAM_CHANNEL_ID": TELEGRAM_CHANNEL_ID,
         "ALIEXPRESS_APP_KEY": ALIEXPRESS_APP_KEY,
         "ALIEXPRESS_APP_SECRET": ALIEXPRESS_APP_SECRET,
         "ALIEXPRESS_TRACKING_ID": ALIEXPRESS_TRACKING_ID,
     }
-    return [k for k, v in checks.items() if not v or v == _PLACEHOLDER]
+    return [k for k, v in checks.items() if not v or v in _PLACEHOLDERS]
 
 
 def run_api_server():
