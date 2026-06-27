@@ -207,7 +207,7 @@ function Login({ onLogin }) {
 }
 
 /* ── Tabela de produtos (reutilizada na watchlist e nos descobertos) ── */
-function ProductTable({ rows, onDelete, onSaveTarget }) {
+function ProductTable({ rows, onDelete, onSaveTarget, showTarget = true }) {
   const [editingId, setEditingId] = useState(null);
   const [editVal, setEditVal] = useState("");
 
@@ -226,8 +226,8 @@ function ProductTable({ rows, onDelete, onSaveTarget }) {
           <th>Produto</th>
           <th className="num-col">Preço atual</th>
           <th className="num-col">Preço mínimo</th>
-          <th className="num-col">Alvo</th>
-          <th className="num-col">Queda</th>
+          {showTarget && <th className="num-col" title="Quando definido, posta assim que o preço atingir esse valor. Sem alvo, posta quando cair abaixo do mínimo histórico.">Alvo ⓘ</th>}
+          <th className="num-col">vs Mínimo</th>
           <th>Último post</th>
           <th className="actions-col"></th>
         </tr>
@@ -248,14 +248,16 @@ function ProductTable({ rows, onDelete, onSaveTarget }) {
               </td>
               <td className="num-col price">{fmt(p.current)}</td>
               <td className="num-col price price-min">{fmt(p.min)}</td>
-              <td className="num-col price">
-                {editingId === p.id ? (
-                  <input className="input mono target-input" type="number" min="0" step="0.01" autoFocus
-                    value={editVal} onChange={(e) => setEditVal(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") save(p); if (e.key === "Escape") setEditingId(null); }}
-                    placeholder="—" />
-                ) : (p.target > 0 ? fmt(p.target) : "—")}
-              </td>
+              {showTarget && (
+                <td className="num-col price">
+                  {editingId === p.id ? (
+                    <input className="input mono target-input" type="number" min="0" step="0.01" autoFocus
+                      value={editVal} onChange={(e) => setEditVal(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") save(p); if (e.key === "Escape") setEditingId(null); }}
+                      placeholder="—" />
+                  ) : (p.target > 0 ? fmt(p.target) : "—")}
+                </td>
+              )}
               <td className="num-col">
                 {p.drop_pct === 0 ? (
                   <span className="drop-badge flat">—</span>
@@ -391,7 +393,7 @@ function Produtos({ api, showToast }) {
             {discovered.length === 0 ? (
               <div className="empty"><div className="empty-sub">Nenhum produto descoberto no momento.</div></div>
             ) : (
-              <ProductTable rows={discovered} onDelete={handleDelete} />
+              <ProductTable rows={discovered} onDelete={handleDelete} showTarget={false} />
             )}
           </div>
         </>
