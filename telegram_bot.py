@@ -15,9 +15,6 @@ def _brl(amount: float) -> str:
 
 
 def _format_message(product: dict, drop_pct: float) -> str:
-    stars = "⭐" * round(product["rating"])
-    sales_fmt = f"{product['sales']:,}".replace(",", ".")
-
     price = product["price"]
     original_price = product["original_price"]
     coupon = product.get("coupon")
@@ -30,9 +27,15 @@ def _format_message(product: dict, drop_pct: float) -> str:
         "",
         f"<b>{title}</b>",
         "",
-        f"<s>{_brl(original_price)}</s>",
-        f"✅ <b>{_brl(price)}</b>  (-{drop_pct:.0f}%)",
     ]
+
+    # preço original riscado só quando há desconto de verdade
+    if original_price > price + 0.01:
+        lines.append(f"<s>{_brl(original_price)}</s>")
+    price_line = f"✅ <b>{_brl(price)}</b>"
+    if drop_pct >= 1:
+        price_line += f"  (-{drop_pct:.0f}%)"
+    lines.append(price_line)
 
     if coupon:
         code = html.escape(coupon["code"])
@@ -65,10 +68,20 @@ def _format_message(product: dict, drop_pct: float) -> str:
     if seller_count > 1:
         lines.append(f"🔎 Menor preço entre {seller_count} anúncios")
 
+    lines.append("🇧🇷 Sem II federal · ICMS ~20% incluso")
+
+    # avaliação/vendas só quando existem — "0.0/5 | 0 vendidos" espanta comprador
+    social = []
+    if product["rating"] > 0:
+        stars = "⭐" * round(product["rating"])
+        social.append(f"{stars} {product['rating']:.1f}/5")
+    if product["sales"] > 0:
+        sales_fmt = f"{product['sales']:,}".replace(",", ".")
+        social.append(f"📦 {sales_fmt} vendidos")
+    if social:
+        lines += ["", "  |  ".join(social)]
+
     lines += [
-        f"🇧🇷 Sem II federal · ICMS ~20% incluso",
-        "",
-        f"{stars} {product['rating']:.1f}/5  |  📦 {sales_fmt} vendidos",
         "",
         f'👉 <a href="{link}">Comprar no AliExpress</a>',
     ]
@@ -166,17 +179,15 @@ def test_connection() -> bool:
             print("[Telegram] Token inválido.")
             return False
 
+        # getChat verifica acesso ao canal sem postar nada
         resp2 = requests.post(
-            f"{TELEGRAM_API}/sendMessage",
-            json={
-                "chat_id": TELEGRAM_CHANNEL_ID,
-                "text": "Bot de promoções iniciado e conectado!",
-            },
+            f"{TELEGRAM_API}/getChat",
+            json={"chat_id": TELEGRAM_CHANNEL_ID},
             timeout=10,
         )
         ok = resp2.json().get("ok", False)
         if not ok:
-            print(f"[Telegram] Não conseguiu postar no canal: {resp2.json().get('description')}")
+            print(f"[Telegram] Sem acesso ao canal: {resp2.json().get('description')}")
         return ok
     except Exception as e:
         print(f"[Telegram] Erro de conexão: {e}")

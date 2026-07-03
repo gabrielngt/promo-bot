@@ -54,8 +54,9 @@ R$ 246,18  (antes R$ 483,13)
         ┌───────────┼────────────────────────────┐
         ▼           ▼                             ▼
   database.py   telegram_bot.py            (enriquece na hora de postar:
-  (SQLite:      └─► Canal do Telegram        frete + cupom + total)
-  produtos,         (foto + legenda HTML)
+  (Postgres/    └─► Canal do Telegram        frete + cupom + total)
+  Supabase:         (foto + legenda HTML)
+  produtos,
   histórico,
   settings)
 
@@ -64,7 +65,7 @@ R$ 246,18  (antes R$ 483,13)
    Azure App Service  +  GitHub Actions (deploy + keep-alive a cada 5 min)
 ```
 
-O scheduler roda em uma thread separada e, a cada ciclo, busca produtos, compara com o histórico de preços no SQLite e posta o que passar nos filtros. Como a AliExpress **não oferece push/webhook**, a arquitetura é baseada em **polling**.
+O scheduler roda em uma thread separada e, a cada ciclo, busca produtos, compara com o histórico de preços no Postgres e posta o que passar nos filtros. Como a AliExpress **não oferece push/webhook**, a arquitetura é baseada em **polling**.
 
 ---
 
@@ -72,7 +73,7 @@ O scheduler roda em uma thread separada e, a cada ciclo, busca produtos, compara
 
 - **Python** — lógica do bot e scheduler
 - **FastAPI** — API REST do painel (autenticação por `X-API-Key`)
-- **SQLite** — produtos, histórico de preços e configurações
+- **Postgres (Supabase)** — produtos, histórico de preços e configurações
 - **AliExpress Affiliate API** — Standard + Advanced (assinatura MD5 das requisições)
 - **Telegram Bot API** — publicação no canal (foto + legenda HTML)
 - **React + Babel** (sem build) na **Vercel** — painel administrativo
@@ -123,7 +124,7 @@ main.py            Entry point: sobe a API e (se houver credenciais) o scheduler
 monitor.py         Lógica de monitoramento: dedup, filtros, detecção de oferta
 aliexpress.py      Cliente da API (assinatura MD5, parser, link/frete/cupom)
 telegram_bot.py    Formatação e publicação das mensagens no canal
-database.py        Camada SQLite (produtos, histórico, settings)
+database.py        Camada Postgres/Supabase (produtos, histórico, settings)
 api.py             API REST (FastAPI) consumida pelo painel
 config.py          Carrega .env, categorias e keywords de periféricos
 frontend/          Painel admin (React + Babel, deploy na Vercel)

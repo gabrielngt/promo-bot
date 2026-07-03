@@ -331,6 +331,7 @@ def parse_product(raw: dict) -> dict | None:
 
         return {
             "product_id": product_id,
+            "has_affiliate": bool(raw.get("promotion_link")),
             "sku_id": str(raw.get("sku_id", "")),
             "title": title,
             "price": price,

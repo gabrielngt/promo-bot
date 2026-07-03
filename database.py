@@ -337,6 +337,15 @@ def set_reactions_offset(offset: int):
         )
 
 
+def prune_price_history(days: int = 90) -> int:
+    """Apaga leituras antigas para o histórico não crescer sem limite.
+    A janela de baseline do monitor é 30 dias; 90 dá folga com margem."""
+    cutoff = _utcnow() - timedelta(days=days)
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM price_history WHERE checked_at < %s", (cutoff,))
+    return cur.rowcount
+
+
 def get_price_history(product_id: str) -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(

@@ -35,14 +35,27 @@ def run_api_server():
     uvicorn.run(fastapi_app, host="0.0.0.0", port=port, log_level="info")
 
 
+def _safe_check():
+    # exceção num ciclo (rede, DB fora do ar) não pode derrubar o scheduler
+    try:
+        run_check()
+    except Exception as e:
+        print(f"[Scheduler] Erro no ciclo: {e}", flush=True)
+
+
 def run_scheduler():
-    run_check()
+    _safe_check()
     last_interval = None
     while True:
-        interval = get_settings()["check_interval_minutes"]
+        try:
+            interval = get_settings()["check_interval_minutes"]
+        except Exception as e:
+            print(f"[Scheduler] Erro ao ler settings: {e}", flush=True)
+            time.sleep(30)
+            continue
         if interval != last_interval:
             schedule.clear()
-            schedule.every(interval).minutes.do(run_check)
+            schedule.every(interval).minutes.do(_safe_check)
             print(f"[Scheduler] Intervalo: {interval} minutos.", flush=True)
             last_interval = interval
         schedule.run_pending()

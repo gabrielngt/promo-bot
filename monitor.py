@@ -1,6 +1,6 @@
 from config import CATEGORIES, PRODUCTS_PER_CATEGORY
 from aliexpress import get_hot_products, get_products_by_brand, parse_product, get_shipping, get_product_detail, search_products
-from database import upsert_product, can_post, mark_posted, get_settings, get_watchlist, get_recent_min, save_reactions, get_reactions_offset, set_reactions_offset
+from database import upsert_product, can_post, mark_posted, get_settings, get_watchlist, get_recent_min, save_reactions, get_reactions_offset, set_reactions_offset, prune_price_history
 from telegram_bot import post_product, fetch_reaction_updates
 
 import re
@@ -9,6 +9,10 @@ import time
 
 def _post_with_shipping(product: dict, pct: float) -> int | None:
     """Enriquece com frete (só agora, na hora de postar) e posta. Retorna message_id ou None."""
+    # sem link de afiliado = sem comissão; não posta (tenta de novo no próximo ciclo)
+    if not product.get("has_affiliate"):
+        print(f"[Monitor] Sem link de afiliado, pulando: {product['title'][:50]}")
+        return None
     shipping = get_shipping(product["product_id"], product.get("sku_id", ""), product["price"])
     if shipping:
         product["shipping"] = shipping
@@ -80,11 +84,18 @@ def _cheapest_equivalent(product: dict) -> dict:
     """Busca anúncios equivalentes (outros vendedores) e retorna o mais barato entre
     eles e o próprio produto. Marca seller_count com quantos anúncios entraram na conta."""
     candidates = [product]
-    for raw in search_products(product["title"]):
+    # título completo é longo/ruidoso demais como termo de busca; as primeiras
+    # palavras (marca + modelo) acham muito mais equivalentes
+    query = " ".join(product["title"].split()[:8])
+    for raw in search_products(query):
         if str(raw.get("product_id")) == product["product_id"]:
             continue
         alt = parse_product(raw)
         if not alt or alt["price"] <= 0:
+            continue
+        # anúncio alternativo só vale se rende comissão e tem sinais de confiança
+        # (evita trocar o link por um seller ruim só porque está mais barato)
+        if not alt.get("has_affiliate") or not _passes_quality(alt):
             continue
         # guarda contra acessórios/capas: preço absurdamente menor não é o mesmo item
         if alt["price"] < product["price"] * 0.3:
@@ -304,4 +315,5 @@ def run_check():
 
     print(f"[Monitor] Verificação concluída. {total_posts} promoções postadas.")
     poll_reactions()
+    prune_price_history()
     return total_posts
