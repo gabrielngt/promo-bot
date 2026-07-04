@@ -359,6 +359,7 @@ def get_status() -> dict:
     """Métricas leves para o painel: última verificação e contagens."""
     with get_connection() as conn:
         row = conn.execute("SELECT value FROM settings WHERE key='last_check_at'").fetchone()
+        last_check = row["value"] if row and row["value"] else None
         counts = conn.execute(
             "SELECT "
             "COUNT(*) FILTER (WHERE is_watched) AS watched, "
@@ -367,8 +368,14 @@ def get_status() -> dict:
             "FROM products",
             (_utcnow() - timedelta(hours=24),),
         ).fetchone()
+        # fallback p/ bancos anteriores ao record_check_run: usa a atividade real
+        # (todo produto é tocado a cada ciclo), evitando "nunca" com posts existentes
+        if last_check is None:
+            r2 = conn.execute("SELECT MAX(last_checked) AS m FROM products").fetchone()
+            if r2 and r2["m"]:
+                last_check = r2["m"].isoformat()
     return {
-        "last_check_at": row["value"] if row and row["value"] else None,
+        "last_check_at": last_check,
         "watched_count": counts["watched"],
         "discovered_count": counts["discovered"],
         "posts_24h": counts["posts_24h"],

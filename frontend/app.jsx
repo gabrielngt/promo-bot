@@ -371,8 +371,12 @@ function StatusBar({ api, showToast, onRan }) {
           <span className="value">{status ? status.posts_24h : ph}</span>
         </div>
         <div className="status-item">
-          <span className="label">Vigiados · Descobertos</span>
-          <span className="value">{status ? `${status.watched_count} · ${status.discovered_count}` : ph}</span>
+          <span className="label">Vigiados</span>
+          <span className="value">{status ? status.watched_count : ph}</span>
+        </div>
+        <div className="status-item">
+          <span className="label">Descobertos</span>
+          <span className="value">{status ? status.discovered_count : ph}</span>
         </div>
       </div>
       <button className="btn btn-primary" onClick={runNow} disabled={running || !mon}
