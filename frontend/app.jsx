@@ -325,13 +325,17 @@ function ProductTable({ rows, onDelete, onSaveTarget, showTarget = true }) {
 /* ── Barra de status + verificar agora ── */
 function StatusBar({ api, showToast, onRan }) {
   const [status, setStatus] = useState(null);
+  const [failed, setFailed] = useState(false);
   const [running, setRunning] = useState(false);
 
   const load = useCallback(async () => {
-    try { setStatus(await api.getStatus()); } catch { /* silencioso: não trava o painel */ }
+    try { setStatus(await api.getStatus()); setFailed(false); }
+    catch { setFailed(true); }
   }, [api]);
 
   useEffect(() => { load(); }, [load]);
+
+  const ph = status ? null : (failed ? "—" : "…");  // placeholder por estado
 
   const runNow = async () => {
     setRunning(true);
@@ -347,7 +351,7 @@ function StatusBar({ api, showToast, onRan }) {
   };
 
   const mon = status?.monitoring_enabled;
-  const dotClass = "dot" + (status ? (mon ? "" : " paused") : " off");
+  const dotClass = "dot" + (status ? (mon ? "" : " paused") : (failed ? " paused" : " off"));
 
   return (
     <div className="card status-card">
@@ -355,24 +359,28 @@ function StatusBar({ api, showToast, onRan }) {
         <div className="status-item">
           <span className="label">Monitoramento</span>
           <span className="value"><span className={dotClass}></span>{
-            status ? (mon ? "Ativo" : "Pausado") : "…"
+            status ? (mon ? "Ativo" : "Pausado") : (failed ? "Indisponível" : "…")
           }{status && !status.filters_enabled ? " · sem filtros" : ""}</span>
         </div>
         <div className="status-item">
           <span className="label">Última verificação</span>
-          <span className="value">{status ? timeAgo(status.last_check_at) : "…"}</span>
+          <span className="value">{status ? timeAgo(status.last_check_at) : ph}</span>
         </div>
         <div className="status-item">
           <span className="label">Posts (24h)</span>
-          <span className="value">{status ? status.posts_24h : "…"}</span>
+          <span className="value">{status ? status.posts_24h : ph}</span>
         </div>
         <div className="status-item">
           <span className="label">Vigiados · Descobertos</span>
-          <span className="value">{status ? `${status.watched_count} · ${status.discovered_count}` : "…"}</span>
+          <span className="value">{status ? `${status.watched_count} · ${status.discovered_count}` : ph}</span>
         </div>
       </div>
       <button className="btn btn-primary" onClick={runNow} disabled={running || !mon}
-        title={mon === false ? "Ative o monitoramento para verificar" : "Roda um ciclo agora, sem esperar o intervalo"}>
+        title={
+          failed ? "Status indisponível — backend pode estar desatualizado"
+          : mon === false ? "Ative o monitoramento para verificar"
+          : "Roda um ciclo agora, sem esperar o intervalo"
+        }>
         <Icon.bolt style={{ width: 15, height: 15 }} /> {running ? "Disparando..." : "Verificar agora"}
       </button>
     </div>
