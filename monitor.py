@@ -1,10 +1,15 @@
 from config import CATEGORIES, PRODUCTS_PER_CATEGORY
 from aliexpress import get_hot_products, get_products_by_brand, parse_product, get_shipping, get_product_detail, search_products
-from database import upsert_product, can_post, mark_posted, get_settings, get_watchlist, get_recent_min, save_reactions, get_reactions_offset, set_reactions_offset, prune_price_history
+from database import upsert_product, can_post, mark_posted, get_settings, get_watchlist, get_recent_min, save_reactions, get_reactions_offset, set_reactions_offset, prune_price_history, record_check_run
 from telegram_bot import post_product, fetch_reaction_updates
 
 import re
 import time
+import threading
+
+# Impede que o disparo manual ("Verificar agora") e o scheduler rodem um ciclo
+# ao mesmo tempo — dois ciclos concorrentes poderiam postar o mesmo item 2x.
+_check_lock = threading.Lock()
 
 
 def _post_with_shipping(product: dict, pct: float) -> int | None:
@@ -266,7 +271,27 @@ def poll_reactions():
 
 
 def run_check():
+    # non-blocking: se um ciclo já roda, ignora o disparo em vez de enfileirar
+    if not _check_lock.acquire(blocking=False):
+        print("[Monitor] Ciclo já em execução — disparo ignorado.")
+        return 0
+    try:
+        return _do_check()
+    finally:
+        _check_lock.release()
+
+
+def _do_check():
     settings = get_settings()
+
+    if not settings["monitoring_enabled"]:
+        print("[Monitor] Monitoramento desativado no painel — ciclo ignorado.")
+        return 0
+
+    if not settings["filters_enabled"]:
+        print("[Monitor] Filtros desativados — sem restrição de keyword/blacklist/marca.")
+        settings = {**settings, "peripheral_keywords": [], "keyword_blacklist": [], "brand_whitelist": []}
+
     brands = settings["brand_whitelist"]
     max_posts = settings["max_posts_per_cycle"]
     total_posts = 0
@@ -316,4 +341,5 @@ def run_check():
     print(f"[Monitor] Verificação concluída. {total_posts} promoções postadas.")
     poll_reactions()
     prune_price_history()
+    record_check_run()
     return total_posts

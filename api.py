@@ -1,4 +1,5 @@
 import os
+import threading
 from fastapi import FastAPI, HTTPException, Security
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,8 +9,10 @@ from typing import Annotated
 from database import (
     get_all_products, delete_product, get_price_history,
     get_settings, update_settings, upsert_product, set_watch, set_target, clear_discovered,
+    get_status,
 )
 from aliexpress import extract_product_id, get_product_detail
+from monitor import run_check
 
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 
@@ -43,6 +46,24 @@ def ping():
 @app.get("/api/health")
 def health(key: str = Security(require_auth)):
     return {"status": "ok"}
+
+
+@app.get("/api/status")
+def status(key: str = Security(require_auth)):
+    s = get_settings()
+    st = get_status()
+    st["monitoring_enabled"] = s["monitoring_enabled"]
+    st["filters_enabled"] = s["filters_enabled"]
+    st["check_interval_minutes"] = s["check_interval_minutes"]
+    return st
+
+
+@app.post("/api/run")
+def trigger_run(key: str = Security(require_auth)):
+    # dispara em background: um ciclo leva minutos e não pode travar a resposta.
+    # run_check tem lock próprio, então um disparo durante outro ciclo é no-op.
+    threading.Thread(target=run_check, daemon=True).start()
+    return {"message": "Verificação disparada"}
 
 
 # ---------- Products ----------
@@ -123,6 +144,8 @@ class SettingsRequest(BaseModel):
     peripheral_keywords:    list[str] | None = None
     brand_whitelist:        list[str] | None = None
     keyword_blacklist:      list[str] | None = None
+    monitoring_enabled:     bool | None = None
+    filters_enabled:        bool | None = None
 
 
 @app.put("/api/settings")

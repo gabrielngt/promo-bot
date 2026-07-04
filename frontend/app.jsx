@@ -79,6 +79,8 @@ function makeApi(baseUrl, apiKey) {
     setTarget:     (id, target_price) => req("PUT", `/api/products/${id}/target`, { target_price }),
     getSettings:   ()           => req("GET",    "/api/settings"),
     saveSettings:  (d)          => req("PUT",    "/api/settings", d),
+    getStatus:     ()           => req("GET",    "/api/status"),
+    runNow:        ()           => req("POST",   "/api/run"),
   };
 }
 
@@ -101,6 +103,8 @@ const fromApi = (s) => ({
   brands:     (s.brand_whitelist ?? []).map(entry =>
     typeof entry === "string" ? parseBrandStr(entry) : entry
   ),
+  monitoring: s.monitoring_enabled ?? true,
+  filters:    s.filters_enabled    ?? true,
 });
 const toApi = (s) => ({
   price_drop_threshold:   s.minDrop / 100,
@@ -123,6 +127,8 @@ const mapProduct = (p) => ({
   drop_pct:   p.drop_pct   ?? 0,
   watched:    !!p.is_watched,
   target:     p.target_price ?? 0,
+  reactPos:   p.reactions_positive ?? 0,
+  reactNeg:   p.reactions_negative ?? 0,
   lastPosted: p.posted_at
     ? new Date(p.posted_at).toLocaleDateString("pt-BR")
     : "—",
@@ -133,6 +139,15 @@ const LS_AUTH = "promobot.auth";
 const loadAuth = () => { try { return JSON.parse(localStorage.getItem(LS_AUTH)); } catch { return null; } };
 const saveAuth = (v) => { try { localStorage.setItem(LS_AUTH, JSON.stringify(v)); } catch {} };
 const fmt = (n) => n > 0 ? "R$ " + n.toFixed(2).replace(".", ",") : "—";
+const timeAgo = (iso) => {
+  if (!iso) return "nunca";
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 0) return "agora mesmo";
+  if (s < 60) return "agora mesmo";
+  if (s < 3600) return `há ${Math.floor(s / 60)} min`;
+  if (s < 86400) return `há ${Math.floor(s / 3600)} h`;
+  return `há ${Math.floor(s / 86400)} d`;
+};
 
 /* ── Toast ── */
 function useToast() {
@@ -229,6 +244,7 @@ function ProductTable({ rows, onDelete, onSaveTarget, showTarget = true }) {
           {showTarget && <th className="num-col" title="Quando definido, posta assim que o preço atingir esse valor. Sem alvo, posta quando cair abaixo do mínimo histórico.">Alvo ⓘ</th>}
           <th className="num-col">vs Mínimo</th>
           <th>Último post</th>
+          <th className="num-col" title="Reações do público no post do Telegram">Reações</th>
           <th className="actions-col"></th>
         </tr>
       </thead>
@@ -268,6 +284,16 @@ function ProductTable({ rows, onDelete, onSaveTarget, showTarget = true }) {
                 )}
               </td>
               <td className="muted-cell">{p.lastPosted}</td>
+              <td className="num-col">
+                {p.reactPos > 0 || p.reactNeg > 0 ? (
+                  <span className="react-cell">
+                    <span className="react-pos">👍 {p.reactPos}</span>
+                    <span className="react-neg">👎 {p.reactNeg}</span>
+                  </span>
+                ) : (
+                  <span className="muted-cell">—</span>
+                )}
+              </td>
               <td className="actions-col">
                 {editingId === p.id ? (
                   <>
@@ -293,6 +319,63 @@ function ProductTable({ rows, onDelete, onSaveTarget, showTarget = true }) {
         })}
       </tbody>
     </table>
+  );
+}
+
+/* ── Barra de status + verificar agora ── */
+function StatusBar({ api, showToast, onRan }) {
+  const [status, setStatus] = useState(null);
+  const [running, setRunning] = useState(false);
+
+  const load = useCallback(async () => {
+    try { setStatus(await api.getStatus()); } catch { /* silencioso: não trava o painel */ }
+  }, [api]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const runNow = async () => {
+    setRunning(true);
+    try {
+      await api.runNow();
+      showToast("Verificação disparada. Os resultados aparecem em instantes.");
+      setTimeout(() => { load(); onRan && onRan(); }, 8000);
+    } catch (err) {
+      showToast("Erro: " + err.message, "err");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const mon = status?.monitoring_enabled;
+  const dotClass = "dot" + (status ? (mon ? "" : " paused") : " off");
+
+  return (
+    <div className="card status-card">
+      <div className="status-stats">
+        <div className="status-item">
+          <span className="label">Monitoramento</span>
+          <span className="value"><span className={dotClass}></span>{
+            status ? (mon ? "Ativo" : "Pausado") : "…"
+          }{status && !status.filters_enabled ? " · sem filtros" : ""}</span>
+        </div>
+        <div className="status-item">
+          <span className="label">Última verificação</span>
+          <span className="value">{status ? timeAgo(status.last_check_at) : "…"}</span>
+        </div>
+        <div className="status-item">
+          <span className="label">Posts (24h)</span>
+          <span className="value">{status ? status.posts_24h : "…"}</span>
+        </div>
+        <div className="status-item">
+          <span className="label">Vigiados · Descobertos</span>
+          <span className="value">{status ? `${status.watched_count} · ${status.discovered_count}` : "…"}</span>
+        </div>
+      </div>
+      <button className="btn btn-primary" onClick={runNow} disabled={running || !mon}
+        title={mon === false ? "Ative o monitoramento para verificar" : "Roda um ciclo agora, sem esperar o intervalo"}>
+        <Icon.bolt style={{ width: 15, height: 15 }} /> {running ? "Disparando..." : "Verificar agora"}
+      </button>
+    </div>
   );
 }
 
@@ -365,6 +448,8 @@ function Produtos({ api, showToast }) {
           <Icon.refresh /> Atualizar
         </button>
       </div>
+
+      <StatusBar api={api} showToast={showToast} onRan={load} />
 
       {loading ? (
         <div className="card table-card"><div className="empty"><div className="empty-sub">Carregando...</div></div></div>
@@ -460,6 +545,20 @@ function Adicionar({ api, showToast, onAdded }) {
 }
 
 /* ── Configurações ── */
+function ControlToggle({ label, hint, on, disabled, onChange }) {
+  return (
+    <div className="control-row">
+      <div className="control-meta">
+        <label className="field-label">{label}</label>
+        <div className="field-hint" style={{ marginTop: 2 }}>{hint}</div>
+      </div>
+      <button type="button" role="switch" aria-checked={on} aria-label={label}
+        className={"switch" + (on ? " on" : "")} disabled={disabled}
+        onClick={() => onChange(!on)} />
+    </div>
+  );
+}
+
 function NumberSetting({ label, hint, value, suffix, onChange, min = 0 }) {
   return (
     <div className="setting-row">
@@ -545,6 +644,19 @@ function Configuracoes({ api, showToast }) {
     brands: draft.brands.map((b, i) => i === idx ? { ...b, keywords: b.keywords.filter(k => k !== kw) } : b)
   });
 
+  // Toggles de controle aplicam na hora (não esperam o botão Salvar): uma
+  // chave-mestra que você esquece de salvar é um perigo. Reverte se a API falhar.
+  const toggleControl = async (draftKey, apiKey, value) => {
+    set({ [draftKey]: value });
+    try {
+      await api.saveSettings({ [apiKey]: value });
+      showToast(value ? "Ativado." : "Desativado.");
+    } catch (err) {
+      set({ [draftKey]: !value });
+      showToast("Erro: " + err.message, "err");
+    }
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -568,6 +680,19 @@ function Configuracoes({ api, showToast }) {
       <div className="page-head">
         <div className="page-title">Configurações</div>
         <div className="page-desc">Regras de monitoramento e de postagem no canal do Telegram.</div>
+      </div>
+
+      <div className="card control-card">
+        <ControlToggle
+          label="Monitoramento ativo"
+          hint="Chave-mestra. Desligado, o bot para de buscar e postar — nada é perdido, é só religar."
+          on={draft.monitoring}
+          onChange={(v) => toggleControl("monitoring", "monitoring_enabled", v)} />
+        <ControlToggle
+          label="Filtros ativos"
+          hint="Keywords, blacklist e marcas. Desligado, o bot considera qualquer produto das categorias (as listas continuam salvas)."
+          on={draft.filters}
+          onChange={(v) => toggleControl("filters", "filters_enabled", v)} />
       </div>
 
       <div className="card form-card">

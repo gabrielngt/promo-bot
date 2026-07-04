@@ -14,7 +14,13 @@ _DEFAULTS = {
     "peripheral_keywords": "",  # populated from config on first init
     "brand_whitelist": "",  # vazio = sem filtro de marca
     "keyword_blacklist": "",  # produtos cujo título contiver qualquer palavra são ignorados
+    "monitoring_enabled": "1",  # chave-mestra: desligado = scheduler não busca/posta
+    "filters_enabled": "1",  # desligado = ignora keyword/blacklist/marca (listas ficam salvas)
 }
+
+
+def _as_bool(v) -> bool:
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
 
 
 def _utcnow() -> datetime:
@@ -180,6 +186,8 @@ def get_settings() -> dict:
         "keyword_blacklist": [
             kw.strip() for kw in s.get("keyword_blacklist", "").splitlines() if kw.strip()
         ],
+        "monitoring_enabled": _as_bool(s.get("monitoring_enabled", "1")),
+        "filters_enabled": _as_bool(s.get("filters_enabled", "1")),
     }
 
 
@@ -335,6 +343,36 @@ def set_reactions_offset(offset: int):
             "INSERT INTO settings (key, value) VALUES ('reactions_offset', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
             (str(offset),)
         )
+
+
+def record_check_run():
+    """Marca o instante do último ciclo concluído (para o card de status do painel)."""
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('last_check_at', %s) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            (_utcnow().isoformat(),),
+        )
+
+
+def get_status() -> dict:
+    """Métricas leves para o painel: última verificação e contagens."""
+    with get_connection() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key='last_check_at'").fetchone()
+        counts = conn.execute(
+            "SELECT "
+            "COUNT(*) FILTER (WHERE is_watched) AS watched, "
+            "COUNT(*) FILTER (WHERE is_watched IS NOT TRUE) AS discovered, "
+            "COUNT(*) FILTER (WHERE posted_at >= %s) AS posts_24h "
+            "FROM products",
+            (_utcnow() - timedelta(hours=24),),
+        ).fetchone()
+    return {
+        "last_check_at": row["value"] if row and row["value"] else None,
+        "watched_count": counts["watched"],
+        "discovered_count": counts["discovered"],
+        "posts_24h": counts["posts_24h"],
+    }
 
 
 def prune_price_history(days: int = 90) -> int:
