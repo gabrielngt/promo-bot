@@ -55,6 +55,12 @@ const Icon = {
       <path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/>
     </svg>
   ),
+  eye: (p) => (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}>
+      <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/>
+      <circle cx="12" cy="12" r="3"/>
+    </svg>
+  ),
 };
 
 /* ── API client ── */
@@ -77,6 +83,7 @@ function makeApi(baseUrl, apiKey) {
     deleteProduct: (id)         => req("DELETE", `/api/products/${id}`),
     clearDiscovered: ()         => req("DELETE", "/api/products/discovered"),
     setTarget:     (id, target_price) => req("PUT", `/api/products/${id}/target`, { target_price }),
+    watchProduct:  (id)         => req("PUT", `/api/products/${id}/watch`),
     getSettings:   ()           => req("GET",    "/api/settings"),
     saveSettings:  (d)          => req("PUT",    "/api/settings", d),
     getStatus:     ()           => req("GET",    "/api/status"),
@@ -222,7 +229,7 @@ function Login({ onLogin }) {
 }
 
 /* ── Tabela de produtos (reutilizada na watchlist e nos descobertos) ── */
-function ProductTable({ rows, onDelete, onSaveTarget, showTarget = true }) {
+function ProductTable({ rows, onDelete, onSaveTarget, onWatch, showTarget = true }) {
   const [editingId, setEditingId] = useState(null);
   const [editVal, setEditVal] = useState("");
 
@@ -308,6 +315,10 @@ function ProductTable({ rows, onDelete, onSaveTarget, showTarget = true }) {
                       <button className="btn btn-ghost" title="Editar preço-alvo"
                         onClick={() => { setEditingId(p.id); setEditVal(p.target > 0 ? String(p.target) : ""); }}
                         aria-label="Editar preço-alvo"><Icon.edit /></button>
+                    )}
+                    {!p.watched && onWatch && (
+                      <button className="btn btn-ghost" title="Adicionar à watchlist"
+                        onClick={() => onWatch(p.id)} aria-label="Adicionar à watchlist"><Icon.eye /></button>
                     )}
                     <button className="btn btn-ghost-danger" title="Remover produto"
                       onClick={() => onDelete(p.id)} aria-label="Remover"><Icon.trash /></button>
@@ -459,6 +470,16 @@ function Produtos({ api, showToast }) {
     }
   };
 
+  const handleWatch = async (id) => {
+    try {
+      await api.watchProduct(id);
+      showToast("Adicionado à watchlist.");
+      load();
+    } catch (err) {
+      showToast("Erro: " + err.message, "err");
+    }
+  };
+
   return (
     <div className="page">
       <div className="page-head" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
@@ -500,7 +521,7 @@ function Produtos({ api, showToast }) {
             {discovered.length === 0 ? (
               <div className="empty"><div className="empty-sub">Nenhum produto descoberto no momento.</div></div>
             ) : (
-              <ProductTable rows={discovered} onDelete={handleDelete} showTarget={false} />
+              <ProductTable rows={discovered} onDelete={handleDelete} onWatch={handleWatch} showTarget={false} />
             )}
           </div>
         </>

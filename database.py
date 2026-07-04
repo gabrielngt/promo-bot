@@ -279,6 +279,15 @@ def set_watch(product_id: str, target_price: float | None = None):
         )
 
 
+def watch_product(product_id: str) -> bool:
+    """Promove um produto já existente (descoberto) para a watchlist, sem tocar no alvo."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE products SET is_watched = TRUE WHERE product_id = %s", (product_id,)
+        )
+    return cur.rowcount > 0
+
+
 def get_watchlist() -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(

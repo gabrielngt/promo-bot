@@ -9,7 +9,7 @@ from typing import Annotated
 from database import (
     get_all_products, delete_product, get_price_history,
     get_settings, update_settings, upsert_product, set_watch, set_target, clear_discovered,
-    get_status,
+    get_status, watch_product,
 )
 from aliexpress import extract_product_id, get_product_detail
 from monitor import run_check
@@ -119,6 +119,13 @@ class TargetRequest(BaseModel):
 def update_target(product_id: str, body: TargetRequest, key: str = Security(require_auth)):
     set_target(product_id, body.target_price)
     return {"message": "Preço-alvo atualizado", "target_price": body.target_price}
+
+
+@app.put("/api/products/{product_id}/watch")
+def watch(product_id: str, key: str = Security(require_auth)):
+    if not watch_product(product_id):
+        raise HTTPException(404, "Produto não encontrado")
+    return {"message": "Produto adicionado à watchlist"}
 
 
 @app.delete("/api/products/{product_id}")
