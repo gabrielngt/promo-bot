@@ -327,6 +327,7 @@ function StatusBar({ api, showToast, onRan }) {
   const [status, setStatus] = useState(null);
   const [failed, setFailed] = useState(false);
   const [running, setRunning] = useState(false);
+  const pollRef = useRef(null);
 
   const load = useCallback(async () => {
     try { setStatus(await api.getStatus()); setFailed(false); }
@@ -334,6 +335,7 @@ function StatusBar({ api, showToast, onRan }) {
   }, [api]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => () => clearInterval(pollRef.current), []);  // limpa ao desmontar
 
   const ph = status ? null : (failed ? "—" : "…");  // placeholder por estado
 
@@ -341,8 +343,16 @@ function StatusBar({ api, showToast, onRan }) {
     setRunning(true);
     try {
       await api.runNow();
-      showToast("Verificação disparada. Os resultados aparecem em instantes.");
-      setTimeout(() => { load(); onRan && onRan(); }, 8000);
+      showToast("Verificação disparada — o ciclo pode levar alguns minutos.");
+      // o ciclo roda em background por minutos; recarrega ao longo de ~1 min
+      // pra pegar o início ("agora mesmo") e os posts que forem surgindo
+      clearInterval(pollRef.current);
+      let n = 0;
+      pollRef.current = setInterval(() => {
+        load(); onRan && onRan();
+        if (++n >= 12) clearInterval(pollRef.current);  // ~12 x 6s = ~72s
+      }, 6000);
+      setTimeout(() => { load(); onRan && onRan(); }, 1500);  // 1º refresh rápido
     } catch (err) {
       showToast("Erro: " + err.message, "err");
     } finally {

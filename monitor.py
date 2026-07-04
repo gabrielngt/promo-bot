@@ -288,6 +288,10 @@ def _do_check():
         print("[Monitor] Monitoramento desativado no painel — ciclo ignorado.")
         return 0
 
+    # marca o início do ciclo: "última verificação" no painel fica responsiva
+    # (um ciclo completo leva minutos; esperar o fim deixava o card defasado)
+    record_check_run()
+
     if not settings["filters_enabled"]:
         print("[Monitor] Filtros desativados — sem restrição de keyword/blacklist/marca.")
         settings = {**settings, "peripheral_keywords": [], "keyword_blacklist": [], "brand_whitelist": []}
@@ -341,5 +345,4 @@ def _do_check():
     print(f"[Monitor] Verificação concluída. {total_posts} promoções postadas.")
     poll_reactions()
     prune_price_history()
-    record_check_run()
     return total_posts
