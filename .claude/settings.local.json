@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh repo *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(git pull *)",
+      "Bash(git commit *)",
+      "Bash(curl -s \"https://promo-bot-rg-bmbncmgnfbc0eham.westeurope-01.azurewebsites.net/api/health\" -H \"X-API-Key: nagata1234\")",
+      "Bash(python \"C:\\\\Users\\\\Nagata\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Nagata-Documents-promo-bot\\\\94da8cd5-962c-4c0b-8a4a-b4f1b5742891\\\\scratchpad\\\\gen_cv_2pag_sem.py\")",
+      "Bash(python -c ' *)",
+      "WebSearch"
+    ]
+  }
+}

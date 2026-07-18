@@ -1,0 +1,22 @@
+name: Keep Alive
+
+# Mantem o app do Azure (plano F1, sem "Always On") acordado, pingando o /ping
+# a cada 5 min. Sem isso, o app dorme apos ~20 min ocioso e o scheduler para.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # a cada 5 minutos
+  workflow_dispatch: {}       # permite rodar manualmente pelo painel do GitHub
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pingar /ping para manter o app acordado
+        run: |
+          URL="https://promo-bot-rg-bmbncmgnfbc0eham.westeurope-01.azurewebsites.net/ping"
+          if curl -fsS --max-time 60 --retry 2 --retry-delay 10 "$URL"; then
+            echo " -> OK: app respondeu (esta acordado)"
+          else
+            echo " -> Aviso: ping falhou ou demorou (app pode estar acordando)"
+          fi
