@@ -95,6 +95,13 @@ def test_aliexpress_parser():
     print(f"     Preço: R$ {product['price']:.2f} (original: R$ {product['original_price']:.2f})")
     print(f"     Rating: {product['rating']:.1f}/5 | Vendidos: {product['sales']}")
 
+    # com preço de app menor que o do site → usa o do app (é o do checkout)
+    raw_app = {**raw, "target_sale_price": "280.52", "target_app_sale_price": "251.99"}
+    p2 = parse_product(raw_app)
+    assert abs(p2["price"] - 251.99) < 0.01
+    assert abs(p2["web_price"] - 280.52) < 0.01
+    print(f"  ✅ Preço do app: usa R$ {p2['price']:.2f} (site R$ {p2['web_price']:.2f})")
+
 
 def test_coupon_parser():
     print("\n--- Teste: aliexpress._parse_coupon ---")
@@ -189,6 +196,45 @@ def test_checkout_price_target():
     p = {"price": 100.0, "coupon": {"applicable": True, "final_price": 80.0}}
     assert abs(_checkout_price(p, settings) - 120.0) < 0.01  # 80 × 1,2 / 0,8
     print("  ✅ Com II 20%: R$ 80 → final R$ 120,00")
+
+
+def test_campaign_coupons():
+    print("\n--- Teste: cupons de campanha (melhor cupom + checkout do print real) ---")
+    from database import _parse_campaign_entry
+    from monitor import _apply_best_coupon, _checkout_price
+
+    assert _parse_campaign_entry("BRT28 141 28") == {"code": "BRT28", "min_spend": 141.0, "discount": 28.0}
+    assert _parse_campaign_entry("linha invalida") is None
+    assert _parse_campaign_entry("BRT28 abc 28") is None
+    print("  ✅ Parse de campanha: 'BRT28 141 28' ✓, linhas inválidas ignoradas")
+
+    settings = {
+        "import_tax_rate": 0.0,
+        "icms_rate": 0.17,
+        "coupon_campaigns": [{"code": "BRT28", "min_spend": 141.0, "discount": 28.0}],
+    }
+
+    # produto sem cupom próprio → campanha aplica
+    # (números do checkout real: app R$ 251,99 − R$ 28 cupom, ICMS 17% por dentro)
+    p = {"price": 251.99, "coupon": None}
+    _apply_best_coupon(p, settings)
+    assert p["coupon"]["code"] == "BRT28"
+    assert abs(p["coupon"]["final_price"] - 223.99) < 0.01
+    assert abs(_checkout_price(p, settings) - 269.87) < 0.01  # 223.99 / 0.83
+    print("  ✅ Checkout do print: 251,99 − 28,00 cupom → final R$ 269,87 (ICMS 17%)")
+
+    # abaixo do gasto mínimo da campanha → nada aplica
+    p2 = {"price": 100.0, "coupon": None}
+    _apply_best_coupon(p2, settings)
+    assert p2["coupon"] is None
+    print("  ✅ Abaixo do gasto mínimo: campanha não aplica")
+
+    # cupom do próprio anúncio maior que a campanha → mantém o do anúncio
+    p3 = {"price": 251.99, "coupon": {"code": "PONTO40", "discount": 40.0, "min_spend": 0.0,
+                                      "applicable": True, "final_price": 211.99}}
+    _apply_best_coupon(p3, settings)
+    assert p3["coupon"]["code"] == "PONTO40"
+    print("  ✅ Cupom do anúncio (R$ 40) vence a campanha (R$ 28)")
 
 
 def test_telegram_message_format():
@@ -309,6 +355,7 @@ if __name__ == "__main__":
     test_coupon_parser()
     test_checkout_total()
     test_checkout_price_target()
+    test_campaign_coupons()
     test_telegram_message_format()
     test_cold_start_logic()
     test_telegram_connection()

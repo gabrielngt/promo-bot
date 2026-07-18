@@ -106,7 +106,10 @@ const fromApi = (s) => ({
   maxPosts:   s.max_posts_per_cycle    ?? 5,
   minDays:    s.min_repost_days        ?? 7,
   importTax:  Math.round((s.import_tax_rate ?? 0)    * 100),
-  icms:       Math.round((s.icms_rate       ?? 0.20) * 100),
+  icms:       Math.round((s.icms_rate       ?? 0.17) * 100),
+  campaigns:  (s.coupon_campaigns ?? [])
+    .map(c => typeof c === "string" ? c : `${c.code} ${c.min_spend} ${c.discount}`)
+    .join("\n"),
   keywords:   s.peripheral_keywords   ?? [],
   blacklist:  s.keyword_blacklist      ?? [],
   brands:     (s.brand_whitelist ?? []).map(entry =>
@@ -123,6 +126,7 @@ const toApi = (s) => ({
   min_repost_days:        Number(s.minDays),
   import_tax_rate:        s.importTax / 100,
   icms_rate:              s.icms / 100,
+  coupon_campaigns:       s.campaigns.split("\n").map(l => l.trim()).filter(Boolean),
   peripheral_keywords:    s.keywords,
   keyword_blacklist:      s.blacklist,
   brand_whitelist:        s.brands.map(serializeBrand),
@@ -772,6 +776,20 @@ function Configuracoes({ api, showToast }) {
             label="ICMS no checkout (%)"
             hint="Cobrado 'por dentro' pelo AliExpress no pagamento (17–20% conforme o estado). Usado no total estimado do post."
             value={draft.icms} suffix="%" onChange={(v) => set({ icms: v })} min={0} />
+
+          <div className="setting-row" style={{ gridTemplateColumns: "1fr", paddingBottom: 4 }}>
+            <div className="setting-meta">
+              <label className="field-label">Cupons de campanha ativos</label>
+              <div className="field-hint" style={{ marginTop: 2 }}>
+                Um por linha: CÓDIGO gasto-mínimo desconto (ex: <code>BRT28 141 28</code>).
+                A API não lista os cupons de campanha — cole aqui os códigos do portal de afiliados
+                e o bot aplica o de maior desconto em cada post (estimativa: a elegibilidade por produto não é verificável).
+              </div>
+            </div>
+            <textarea className="input" rows={3} style={{ resize: "vertical", fontFamily: "inherit" }}
+              placeholder={"BRT28 141 28\nBRT56 282 56"}
+              value={draft.campaigns} onChange={(e) => set({ campaigns: e.target.value })} />
+          </div>
 
           <div className="setting-row" style={{ gridTemplateColumns: "1fr", paddingBottom: 4 }}>
             <div className="setting-meta">

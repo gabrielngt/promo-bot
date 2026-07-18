@@ -400,7 +400,12 @@ def parse_product(raw: dict) -> dict | None:
         product_id = str(raw["product_id"])
         title = raw.get("product_title", "")
         price_str = raw.get("target_sale_price") or raw.get("sale_price") or "0"
-        price = _parse_price(price_str)
+        web_price = _parse_price(price_str)
+        # preço no app costuma ser o do checkout (~10% menor; o link de afiliado
+        # abre o app) — usa o menor dos dois e guarda o do site para exibição
+        app_str = raw.get("target_app_sale_price") or raw.get("app_sale_price")
+        app_price = _parse_price(app_str) if app_str else 0.0
+        price = app_price if 0 < app_price < web_price else web_price
         original_str = raw.get("target_original_price") or raw.get("original_price") or price_str
         original_price = _parse_price(original_str)
         discount = raw.get("discount", "0%").replace("%", "")
@@ -417,6 +422,7 @@ def parse_product(raw: dict) -> dict | None:
             "sku_id": str(raw.get("sku_id", "")),
             "title": title,
             "price": price,
+            "web_price": web_price,
             "original_price": original_price,
             "discount_pct": float(discount) if discount else 0.0,
             "coupon": coupon,

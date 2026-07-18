@@ -12,7 +12,7 @@ Bot que monitora a **API de afiliados da AliExpress** e publica automaticamente 
 |---|---|
 | 🛒 **Descoberta de ofertas** | Busca produtos em alta por **categoria** e por **marca** na AliExpress |
 | 📉 **Detecção de promoção** | Posta quando o preço cai abaixo do mínimo histórico **ou** quando há desconto forte sobre o preço original |
-| 🎟️ **Cupons** | Extrai o cupom do anúncio (fixo ou percentual) e calcula o **preço final com cupom** |
+| 🎟️ **Cupons** | Extrai o cupom do anúncio (fixo ou percentual), aplica **cupons de campanha** do painel e calcula o **preço final** |
 | 🚚 **Frete + prazo** | Busca o frete real para o Brasil e mostra o prazo de entrega |
 | 💳 **Total no checkout** | Estima o valor final **com impostos** (II + ICMS configuráveis no painel) |
 | 🔗 **Link rastreável** | Gera link de afiliado para 100% de rastreamento de comissão |
@@ -33,7 +33,7 @@ R$ 246,18  (antes R$ 483,13)
 ✅ R$ 246,18  (-49%)
 🎟 Cupom PONTO40: -R$ 28,19 → R$ 217,99
 🚚 Frete: R$ 24,00 · chega em ~15 dias
-💳 Total estimado no checkout: R$ 302,49 (impostos inclusos)
+💳 Total estimado no checkout: R$ 291,55 (impostos inclusos)
 
 ⭐⭐⭐⭐⭐ 4.8/5  |  📦 5.583 vendidos
 
@@ -136,7 +136,9 @@ test_bot.py        Testes (pytest)
 ## 📌 Decisões de engenharia
 
 - **Polling, não webhook** — a AliExpress não expõe push; o scheduler verifica em intervalo configurável.
-- **Imposto no preço** — o preço retornado pela API vem **sem** os tributos que o AliExpress soma no checkout (Remessa Conforme). O post mostra o **total estimado**: `(preço + frete) × (1 + II) ÷ (1 − ICMS)`, com alíquotas configuráveis no painel — padrão II 0% (zerado por MP em mai/2026 para compras ≤ US$50) e ICMS 20% "por dentro".
+- **Imposto no preço** — o preço retornado pela API vem **sem** os tributos que o AliExpress soma no checkout (Remessa Conforme). O post mostra o **total estimado**: `(preço + frete) × (1 + II) ÷ (1 − ICMS)`, com alíquotas configuráveis no painel — padrão II 0% (zerado por MP em mai/2026 para compras ≤ US$50) e ICMS 17% "por dentro" (17–20% conforme o estado; validado contra checkout real).
+- **Preço do app** — quando a API manda `target_app_sale_price` menor que o preço do site, o bot usa o do app (o link de afiliado abre o app e é esse o valor do checkout) e indica no post.
+- **Cupons de campanha** — a API não lista cupons ativos (nem de loja); só o `promo_code_info` de cada anúncio. Os códigos de campanha do portal de afiliados são colados no painel e o bot aplica o de maior desconto aplicável em cada post.
 - **Dedup por fingerprint de título** — o mesmo produto aparece de vários sellers; agrupar por palavras normalizadas e manter o mais barato evita spam de itens repetidos.
 - **Enriquecimento sob demanda** — frete e cupom são buscados **só na hora de postar** (1 chamada por produto publicado), economizando requisições.
 - **Keep-alive** — no plano gratuito do Azure (sem *Always On*), um cron do GitHub Actions pinga o app a cada 5 min para o scheduler não parar.

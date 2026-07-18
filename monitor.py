@@ -12,6 +12,25 @@ import threading
 _check_lock = threading.Lock()
 
 
+def _apply_best_coupon(product: dict, settings: dict):
+    """Compara o cupom do próprio anúncio com os cupons de campanha do painel e
+    deixa em product["coupon"] o de maior desconto aplicável. Os de campanha são
+    estimativa: a API não expõe elegibilidade por produto/categoria."""
+    own = product.get("coupon")
+    best = own if (own and own.get("applicable")) else None
+    for camp in settings.get("coupon_campaigns", []):
+        if product["price"] >= camp["min_spend"] and camp["discount"] > (best["discount"] if best else 0.0):
+            best = {
+                "code": camp["code"],
+                "discount": camp["discount"],
+                "min_spend": camp["min_spend"],
+                "applicable": True,
+                "final_price": round(product["price"] - camp["discount"], 2),
+            }
+    if best:
+        product["coupon"] = best
+
+
 def _checkout_price(product: dict, settings: dict) -> float:
     """Preço final estimado no checkout: cupom aplicado + impostos (II e ICMS).
     Sem frete — ele só é consultado na hora de postar (1 chamada por post)."""
@@ -32,7 +51,9 @@ def _post_with_shipping(product: dict, pct: float, settings: dict) -> int | None
     shipping = get_shipping(product["product_id"], product.get("sku_id", ""), product["price"])
     if shipping:
         product["shipping"] = shipping
-    # alíquotas para o total estimado no checkout (preço da API vem sem tributos)
+    # melhor cupom (anúncio vs campanhas do painel) e alíquotas para o total
+    # estimado no checkout (preço da API vem sem tributos)
+    _apply_best_coupon(product, settings)
     product["taxes"] = {"ii": settings["import_tax_rate"], "icms": settings["icms_rate"]}
     return post_product(product, pct)
 
@@ -245,6 +266,7 @@ def check_watchlist(settings: dict, max_posts: int, seen_fingerprints: dict) -> 
 
         # o alvo é comparado com o preço FINAL (cupom + impostos), que é o que
         # o usuário paga; o histórico/queda continua no preço-base da API.
+        _apply_best_coupon(best, settings)
         final_price = _checkout_price(best, settings)
         hit_target = target is not None and final_price <= target
         is_drop = drop_pct >= threshold

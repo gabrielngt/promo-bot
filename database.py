@@ -19,7 +19,10 @@ _DEFAULTS = {
     # tributos somados pelo AliExpress no checkout (o preço da API vem sem eles):
     # total = (preço + frete) × (1 + II) ÷ (1 − ICMS)
     "import_tax_rate": "0",  # II federal — zerado pela MP de mai/2026 para compras ≤ US$50
-    "icms_rate": "0.20",  # ICMS cobrado "por dentro" (17–20% conforme o estado)
+    "icms_rate": "0.17",  # ICMS cobrado "por dentro" (17–20% conforme o estado)
+    # cupons de campanha ativos (a API não os lista; cole do portal de afiliados)
+    # um por linha: CODIGO gasto_minimo desconto — ex: "BRT28 141 28"
+    "coupon_campaigns": "",
 }
 
 
@@ -160,6 +163,21 @@ def init_db(keyword_defaults: list[str] | None = None):
 
 # ---------- Settings ----------
 
+def _parse_campaign_entry(line: str) -> dict | None:
+    """Linha "CODIGO gasto_minimo desconto" → {code, min_spend, discount}. None se inválida."""
+    parts = line.split()
+    if len(parts) != 3:
+        return None
+    try:
+        return {
+            "code": parts[0],
+            "min_spend": float(parts[1].replace(",", ".")),
+            "discount": float(parts[2].replace(",", ".")),
+        }
+    except ValueError:
+        return None
+
+
 def _parse_brand_entry(line: str) -> dict:
     if ":" in line:
         name, _, kws_str = line.partition(":")
@@ -193,14 +211,21 @@ def get_settings() -> dict:
         "monitoring_enabled": _as_bool(s.get("monitoring_enabled", "1")),
         "filters_enabled": _as_bool(s.get("filters_enabled", "1")),
         "import_tax_rate": float(s.get("import_tax_rate", 0.0)),
-        "icms_rate": float(s.get("icms_rate", 0.20)),
+        "icms_rate": float(s.get("icms_rate", 0.17)),
+        "coupon_campaigns": [
+            c for c in (
+                _parse_campaign_entry(line)
+                for line in s.get("coupon_campaigns", "").splitlines()
+                if line.strip()
+            ) if c is not None
+        ],
     }
 
 
 def update_settings(data: dict):
     with get_connection() as conn:
         for k, v in data.items():
-            if k in ("peripheral_keywords", "brand_whitelist", "keyword_blacklist") and isinstance(v, list):
+            if k in ("peripheral_keywords", "brand_whitelist", "keyword_blacklist", "coupon_campaigns") and isinstance(v, list):
                 v = "\n".join(v)
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",

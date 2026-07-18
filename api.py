@@ -155,6 +155,7 @@ class SettingsRequest(BaseModel):
     filters_enabled:        bool | None = None
     import_tax_rate:        Annotated[float, Field(ge=0, le=1)] | None = None
     icms_rate:              Annotated[float, Field(ge=0, lt=1)] | None = None
+    coupon_campaigns:       list[str] | None = None
 
 
 @app.put("/api/settings")

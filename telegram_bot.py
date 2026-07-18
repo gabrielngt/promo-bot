@@ -37,6 +37,8 @@ def _format_message(product: dict, drop_pct: float) -> str:
     if drop_pct >= 1:
         price_line += f"  (-{drop_pct:.0f}%)"
     lines.append(price_line)
+    if product.get("web_price", 0) > price + 0.01:
+        lines.append(f"📱 Preço no app (no site: {_brl(product['web_price'])})")
 
     if coupon:
         code = html.escape(coupon["code"])
