@@ -9,7 +9,7 @@ from typing import Annotated
 from database import (
     get_all_products, delete_product, get_price_history,
     get_settings, update_settings, upsert_product, set_watch, set_target, clear_discovered,
-    get_status, watch_product,
+    get_status, watch_product, get_active_coupons,
 )
 from aliexpress import extract_product_id, get_product_detail
 from monitor import run_check
@@ -133,6 +133,12 @@ def remove_product(product_id: str, key: str = Security(require_auth)):
     if not delete_product(product_id):
         raise HTTPException(404, "Produto não encontrado")
     return {"message": "Produto removido"}
+
+
+@app.get("/api/coupons")
+def list_coupons(key: str = Security(require_auth)):
+    """Cupons de campanha descobertos automaticamente nos anúncios (últimas 72h)."""
+    return get_active_coupons()
 
 
 # ---------- Settings ----------

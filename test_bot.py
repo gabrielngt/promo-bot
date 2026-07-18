@@ -208,33 +208,94 @@ def test_campaign_coupons():
     assert _parse_campaign_entry("BRT28 abc 28") is None
     print("  ✅ Parse de campanha: 'BRT28 141 28' ✓, linhas inválidas ignoradas")
 
+    # formato livre: texto colado do portal de afiliados
+    c = _parse_campaign_entry("Código BRT28 — compras acima de R$ 141,00: R$ 28,00 OFF")
+    assert c == {"code": "BRT28", "min_spend": 141.0, "discount": 28.0}
+    c = _parse_campaign_entry("BRT56: gaste 282, ganhe 56 de desconto")
+    assert c == {"code": "BRT56", "min_spend": 282.0, "discount": 56.0}
+    assert _parse_campaign_entry("R$ 28,00 off sem codigo nenhum") is None
+    print("  ✅ Formato livre: extrai código/mínimo/desconto de texto colado")
+
     settings = {
         "import_tax_rate": 0.0,
         "icms_rate": 0.17,
         "coupon_campaigns": [{"code": "BRT28", "min_spend": 141.0, "discount": 28.0}],
     }
 
-    # produto sem cupom próprio → campanha aplica
-    # (números do checkout real: app R$ 251,99 − R$ 28 cupom, ICMS 17% por dentro)
-    p = {"price": 251.99, "coupon": None}
-    _apply_best_coupon(p, settings)
-    assert p["coupon"]["code"] == "BRT28"
-    assert abs(p["coupon"]["final_price"] - 223.99) < 0.01
-    assert abs(_checkout_price(p, settings) - 269.87) < 0.01  # 223.99 / 0.83
-    print("  ✅ Checkout do print: 251,99 − 28,00 cupom → final R$ 269,87 (ICMS 17%)")
+    # isola dos cupons descobertos que o bot de produção guarda no banco
+    import monitor as monitor_mod
+    orig_active = monitor_mod.get_active_coupons
+    monitor_mod.get_active_coupons = lambda: []
+    try:
+        # produto sem cupom próprio → campanha aplica
+        # (números do checkout real: app R$ 251,99 − R$ 28 cupom, ICMS 17% por dentro)
+        p = {"price": 251.99, "coupon": None}
+        _apply_best_coupon(p, settings)
+        assert p["coupon"]["code"] == "BRT28"
+        assert abs(p["coupon"]["final_price"] - 223.99) < 0.01
+        assert abs(_checkout_price(p, settings) - 269.87) < 0.01  # 223.99 / 0.83
+        print("  ✅ Checkout do print: 251,99 − 28,00 cupom → final R$ 269,87 (ICMS 17%)")
 
-    # abaixo do gasto mínimo da campanha → nada aplica
-    p2 = {"price": 100.0, "coupon": None}
-    _apply_best_coupon(p2, settings)
-    assert p2["coupon"] is None
-    print("  ✅ Abaixo do gasto mínimo: campanha não aplica")
+        # abaixo do gasto mínimo da campanha → nada aplica
+        p2 = {"price": 100.0, "coupon": None}
+        _apply_best_coupon(p2, settings)
+        assert p2["coupon"] is None
+        print("  ✅ Abaixo do gasto mínimo: campanha não aplica")
 
-    # cupom do próprio anúncio maior que a campanha → mantém o do anúncio
-    p3 = {"price": 251.99, "coupon": {"code": "PONTO40", "discount": 40.0, "min_spend": 0.0,
-                                      "applicable": True, "final_price": 211.99}}
-    _apply_best_coupon(p3, settings)
-    assert p3["coupon"]["code"] == "PONTO40"
-    print("  ✅ Cupom do anúncio (R$ 40) vence a campanha (R$ 28)")
+        # cupom do próprio anúncio maior que a campanha → mantém o do anúncio
+        p3 = {"price": 251.99, "coupon": {"code": "PONTO40", "discount": 40.0, "min_spend": 0.0,
+                                          "applicable": True, "final_price": 211.99}}
+        _apply_best_coupon(p3, settings)
+        assert p3["coupon"]["code"] == "PONTO40"
+        print("  ✅ Cupom do anúncio (R$ 40) vence a campanha (R$ 28)")
+    finally:
+        monitor_mod.get_active_coupons = orig_active
+
+
+def test_coupon_harvest():
+    print("\n--- Teste: colheita automática de cupons (via banco) ---")
+    from database import init_db, get_active_coupons, get_connection
+    from monitor import _harvest_coupon, _apply_best_coupon
+
+    init_db()
+
+    # cupom fixo visto num anúncio → vai para o banco
+    seen = {"coupon": {"code": "TESTCUP99", "discount": 28.0, "min_spend": 141.0,
+                       "fixed": True, "applicable": True, "final_price": 172.0}}
+    _harvest_coupon(seen)
+    active = {c["code"]: c for c in get_active_coupons()}
+    assert "TESTCUP99" in active
+    assert active["TESTCUP99"]["discount"] == 28.0
+    print("  ✅ Cupom visto num anúncio foi salvo e está ativo")
+
+    # cupom percentual NÃO é colhido (desconto depende do preço do anúncio)
+    pct = {"coupon": {"code": "TESTPCT99", "discount": 10.0, "min_spend": 50.0,
+                      "fixed": False, "applicable": True, "final_price": 90.0}}
+    _harvest_coupon(pct)
+    assert "TESTPCT99" not in {c["code"] for c in get_active_coupons()}
+    print("  ✅ Cupom percentual não é colhido")
+
+    # outro produto SEM cupom próprio recebe o cupom descoberto
+    # (restringe a lista ao cupom de teste para não depender do que o bot de
+    # produção já colheu no mesmo banco)
+    import monitor as monitor_mod
+    rows = [c for c in get_active_coupons() if c["code"] == "TESTCUP99"]
+    orig_active = monitor_mod.get_active_coupons
+    monitor_mod.get_active_coupons = lambda: rows
+    try:
+        settings = {"import_tax_rate": 0.0, "icms_rate": 0.17, "coupon_campaigns": []}
+        other = {"price": 200.0, "coupon": None}
+        _apply_best_coupon(other, settings)
+        assert other["coupon"] is not None and other["coupon"]["code"] == "TESTCUP99"
+        assert abs(other["coupon"]["final_price"] - 172.0) < 0.01
+        print("  ✅ Cupom descoberto aplicado em outro produto (200 − 28 = 172)")
+    finally:
+        monitor_mod.get_active_coupons = orig_active
+
+    # limpeza
+    with get_connection() as conn:
+        conn.execute("DELETE FROM coupons WHERE code IN ('TESTCUP99', 'TESTPCT99')")
+    print("  ✅ Colheita OK")
 
 
 def test_telegram_message_format():
@@ -356,6 +417,7 @@ if __name__ == "__main__":
     test_checkout_total()
     test_checkout_price_target()
     test_campaign_coupons()
+    test_coupon_harvest()
     test_telegram_message_format()
     test_cold_start_logic()
     test_telegram_connection()

@@ -87,6 +87,7 @@ function makeApi(baseUrl, apiKey) {
     getSettings:   ()           => req("GET",    "/api/settings"),
     saveSettings:  (d)          => req("PUT",    "/api/settings", d),
     getStatus:     ()           => req("GET",    "/api/status"),
+    getCoupons:    ()           => req("GET",    "/api/coupons"),
     runNow:        ()           => req("POST",   "/api/run"),
   };
 }
@@ -636,10 +637,13 @@ function Configuracoes({ api, showToast }) {
   const [savedFlash, setSavedFlash] = useState(false);
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
 
+  const [autoCoupons, setAutoCoupons] = useState([]);
+
   useEffect(() => {
     api.getSettings()
       .then((s) => setDraft(fromApi(s)))
       .catch((err) => showToast("Erro ao carregar configurações: " + err.message, "err"));
+    api.getCoupons().then(setAutoCoupons).catch(() => {});
   }, [api]);
 
   const [newBrandInput, setNewBrandInput] = useState("");
@@ -779,16 +783,30 @@ function Configuracoes({ api, showToast }) {
 
           <div className="setting-row" style={{ gridTemplateColumns: "1fr", paddingBottom: 4 }}>
             <div className="setting-meta">
-              <label className="field-label">Cupons de campanha ativos</label>
+              <label className="field-label">Cupons de campanha (manuais)</label>
               <div className="field-hint" style={{ marginTop: 2 }}>
-                Um por linha: CÓDIGO gasto-mínimo desconto (ex: <code>BRT28 141 28</code>).
-                A API não lista os cupons de campanha — cole aqui os códigos do portal de afiliados
-                e o bot aplica o de maior desconto em cada post (estimativa: a elegibilidade por produto não é verificável).
+                Cole uma campanha por linha, em qualquer formato — o bot entende
+                <code> BRT28 141 28</code> e também texto do portal, tipo
+                "Código BRT28 — compras acima de R$ 141,00: R$ 28,00 OFF".
+                Além destes, o bot <b>descobre cupons sozinho</b> nos anúncios que escaneia
+                e aplica o de maior desconto em cada post.
               </div>
             </div>
             <textarea className="input" rows={3} style={{ resize: "vertical", fontFamily: "inherit" }}
-              placeholder={"BRT28 141 28\nBRT56 282 56"}
+              placeholder={"BRT28 141 28\nCódigo BRT56 — compras acima de R$ 282,00: R$ 56,00 OFF"}
               value={draft.campaigns} onChange={(e) => set({ campaigns: e.target.value })} />
+            {autoCoupons.length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <div className="field-hint">Descobertos automaticamente nos anúncios (últimas 72h):</div>
+                <div className="tags-wrap" style={{ marginTop: 4 }}>
+                  {autoCoupons.map((c) => (
+                    <span className="tag" key={c.code} title={`Gasto mínimo R$ ${Number(c.min_spend).toFixed(2)}`}>
+                      {c.code} · −R$ {Number(c.discount).toFixed(2)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="setting-row" style={{ gridTemplateColumns: "1fr", paddingBottom: 4 }}>

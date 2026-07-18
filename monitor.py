@@ -1,6 +1,6 @@
 from config import CATEGORIES, PRODUCTS_PER_CATEGORY
 from aliexpress import get_hot_products, get_products_by_brand, parse_product, get_shipping, get_product_detail, search_products, get_featured_promos, get_featured_promo_products
-from database import upsert_product, can_post, mark_posted, get_settings, get_watchlist, get_recent_min, save_reactions, get_reactions_offset, set_reactions_offset, prune_price_history, record_check_run
+from database import upsert_product, can_post, mark_posted, get_settings, get_watchlist, get_recent_min, save_reactions, get_reactions_offset, set_reactions_offset, prune_price_history, record_check_run, save_coupon, get_active_coupons
 from telegram_bot import post_product, fetch_reaction_updates
 
 import re
@@ -12,18 +12,28 @@ import threading
 _check_lock = threading.Lock()
 
 
+def _harvest_coupon(product: dict):
+    """Guarda cupons de campanha vistos em anúncios: o código é global, então um
+    cupom descoberto num produto pode ser aplicado nos outros posts do ciclo."""
+    c = product.get("coupon")
+    if c and c.get("fixed") and c["discount"] > 0 and c["min_spend"] > 0:
+        save_coupon(c["code"], c["min_spend"], c["discount"])
+
+
 def _apply_best_coupon(product: dict, settings: dict):
-    """Compara o cupom do próprio anúncio com os cupons de campanha do painel e
-    deixa em product["coupon"] o de maior desconto aplicável. Os de campanha são
-    estimativa: a API não expõe elegibilidade por produto/categoria."""
+    """Compara o cupom do próprio anúncio com os de campanha (painel + descobertos
+    automaticamente) e deixa em product["coupon"] o de maior desconto aplicável.
+    Os de campanha são estimativa: a API não expõe elegibilidade por produto."""
     own = product.get("coupon")
     best = own if (own and own.get("applicable")) else None
-    for camp in settings.get("coupon_campaigns", []):
+    campaigns = list(settings.get("coupon_campaigns", [])) + get_active_coupons()
+    for camp in campaigns:
         if product["price"] >= camp["min_spend"] and camp["discount"] > (best["discount"] if best else 0.0):
             best = {
                 "code": camp["code"],
                 "discount": camp["discount"],
                 "min_spend": camp["min_spend"],
+                "fixed": True,
                 "applicable": True,
                 "final_price": round(product["price"] - camp["discount"], 2),
             }
@@ -163,6 +173,7 @@ def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_
         p = parse_product(raw)
         if not p:
             continue
+        _harvest_coupon(p)
         fp = _title_fingerprint(p["title"])
 
         if fp in seen_fingerprints:
@@ -248,6 +259,7 @@ def check_watchlist(settings: dict, max_posts: int, seen_fingerprints: dict) -> 
         fresh = get_product_detail(item["product_id"])
         if not fresh:
             continue
+        _harvest_coupon(fresh)
 
         # busca anúncios equivalentes (outros vendedores) e fica com o mais barato
         best = _cheapest_equivalent(fresh)

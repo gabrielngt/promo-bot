@@ -149,6 +149,14 @@ def init_db(keyword_defaults: list[str] | None = None):
                 value   TEXT
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS coupons (
+                code        TEXT PRIMARY KEY,
+                min_spend   double precision NOT NULL,
+                discount    double precision NOT NULL,
+                last_seen   timestamptz NOT NULL
+            )
+        """)
         for stmt in _SCHEMA_MIGRATIONS:
             conn.execute(stmt)
         defaults = dict(_DEFAULTS)
@@ -163,19 +171,53 @@ def init_db(keyword_defaults: list[str] | None = None):
 
 # ---------- Settings ----------
 
+def _num(s: str) -> float:
+    """'141' / '141,00' / 'R$1.299,90' → float. Levanta ValueError se não for número."""
+    s = s.strip().lstrip("Rr$ ").replace(" ", "")
+    if "," in s and "." in s:
+        s = s.replace(".", "").replace(",", ".")
+    else:
+        s = s.replace(",", ".")
+    return float(s)
+
+
 def _parse_campaign_entry(line: str) -> dict | None:
-    """Linha "CODIGO gasto_minimo desconto" → {code, min_spend, discount}. None se inválida."""
+    """Extrai {code, min_spend, discount} de uma linha em formato livre.
+    Aceita "BRT28 141 28" e também texto colado do portal, tipo
+    "Código BRT28 — compras acima de R$ 141,00: R$ 28,00 OFF".
+    Heurística do formato livre: código = token com letras E números;
+    gasto mínimo = maior valor da linha; desconto = segundo maior."""
+    import re
     parts = line.split()
-    if len(parts) != 3:
+    if len(parts) == 3:
+        try:
+            return {"code": parts[0], "min_spend": _num(parts[1]), "discount": _num(parts[2])}
+        except ValueError:
+            pass
+    code = None
+    for t in parts:
+        tok = t.strip(".,:;()|—-")
+        if (len(tok) >= 4 and re.search(r"[A-Za-z]", tok) and re.search(r"\d", tok)
+                and not tok.upper().startswith("R$")):
+            code = tok
+            break
+    if not code:
         return None
-    try:
-        return {
-            "code": parts[0],
-            "min_spend": float(parts[1].replace(",", ".")),
-            "discount": float(parts[2].replace(",", ".")),
-        }
-    except ValueError:
+    nums = []
+    for n in re.findall(r"\d+(?:[.,]\d{1,2})?", line.replace(code, " ")):
+        try:
+            v = _num(n)
+        except ValueError:
+            continue
+        if v > 0:
+            nums.append(v)
+    if len(nums) < 2:
         return None
+    nums.sort(reverse=True)
+    min_spend, discount = nums[0], nums[1]
+    if discount >= min_spend:
+        return None
+    return {"code": code, "min_spend": min_spend, "discount": discount}
 
 
 def _parse_brand_entry(line: str) -> dict:
@@ -383,6 +425,32 @@ def set_reactions_offset(offset: int):
             "INSERT INTO settings (key, value) VALUES ('reactions_offset', %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
             (str(offset),)
         )
+
+
+# ---------- Cupons descobertos ----------
+# Cupons de campanha são globais (o mesmo código vale em vários produtos), então
+# todo cupom visto num anúncio é guardado e reaplicado nos demais posts.
+
+def save_coupon(code: str, min_spend: float, discount: float):
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO coupons (code, min_spend, discount, last_seen) VALUES (%s, %s, %s, %s) "
+            "ON CONFLICT (code) DO UPDATE SET min_spend=EXCLUDED.min_spend, "
+            "discount=EXCLUDED.discount, last_seen=EXCLUDED.last_seen",
+            (code, min_spend, discount, _utcnow()),
+        )
+
+
+def get_active_coupons(max_age_hours: int = 72) -> list[dict]:
+    """Cupons vistos nas últimas N horas (campanhas expiram; 72h é folga segura)."""
+    cutoff = _utcnow() - timedelta(hours=max_age_hours)
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT code, min_spend, discount, last_seen FROM coupons "
+            "WHERE last_seen >= %s ORDER BY discount DESC",
+            (cutoff,),
+        ).fetchall()
+    return list(rows)
 
 
 def record_check_run():

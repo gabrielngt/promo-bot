@@ -389,6 +389,7 @@ def _parse_coupon(raw: dict, price: float) -> dict | None:
         "code": code,
         "discount": discount,
         "min_spend": min_spend,
+        "fixed": "%" not in desc,  # só cupons de valor fixo valem para outros produtos
         "applicable": applicable,
         "final_price": round(price - discount, 2) if applicable else price,
     }
