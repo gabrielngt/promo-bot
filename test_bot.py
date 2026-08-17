@@ -269,29 +269,52 @@ def test_order_parser():
     assert _extract_date("data invalida") is None
     print("  ✅ _extract_date: formatos comuns reconhecidos, inválido → None")
 
+    # valores monetários vêm em CENTAVOS (inteiro) — caso real do pedido do teclado
+    from aliexpress import _parse_money_field
+    assert abs(_parse_money_field("3792") - 37.92) < 0.01
+    assert abs(_parse_money_field("113") - 1.13) < 0.01
+    assert abs(_parse_money_field("58") - 0.58) < 0.01
+    assert abs(_parse_money_field("0") - 0.0) < 0.01
+    # se um dia vier com decimal explícito, já está em unidades — não divide
+    assert abs(_parse_money_field("37.92") - 37.92) < 0.01
+    print("  ✅ _parse_money_field: centavos → unidades (3792 → 37.92), decimal preservado")
+
     # pedido "pago" (ainda não confirmado) → usa os campos paid_*
     raw_paid = {
         "order_id": "800123", "product_id": "1005006789", "product_title": "Mouse Teste",
-        "order_status": "Payment Completed", "paid_amount": "150.00", "commission_rate": "5%",
-        "estimated_paid_commission": "7.50", "settled_currency": "BRL",
+        "order_status": "Payment Completed", "paid_amount": "15000", "commission_rate": "5%",
+        "estimated_paid_commission": "750", "settled_currency": "USD",
         "created_time": "2026-08-10 12:00:00", "is_new_buyer": "true",
     }
     o = _parse_order(raw_paid)
     assert o["order_id"] == "800123" and o["sub_order_id"] == "800123"  # sem sub_order_id → usa order_id
     assert abs(o["paid_amount"] - 150.0) < 0.01
     assert abs(o["estimated_commission"] - 7.50) < 0.01
+    assert o["currency"] == "USD", "moeda vem do settled_currency, não assume BRL"
     assert o["order_date"] == "2026-08-10"
     assert o["is_new_buyer"] is True
-    print("  ✅ Pedido 'pago': usa paid_amount/estimated_paid_commission")
+    print("  ✅ Pedido 'pago': usa paid_amount/estimated_paid_commission, moeda do dado")
 
     # pedido "confirmado" → prefere os campos finished_* sobre os paid_*
     raw_finished = {**raw_paid, "sub_order_id": "800123-1",
-                    "finished_amount": "148.00", "estimated_finished_commission": "7.40"}
+                    "finished_amount": "14800", "estimated_finished_commission": "740"}
     o2 = _parse_order(raw_finished)
     assert o2["sub_order_id"] == "800123-1"
     assert abs(o2["paid_amount"] - 148.0) < 0.01, "deve preferir finished_amount sobre paid_amount"
     assert abs(o2["estimated_commission"] - 7.40) < 0.01
     print("  ✅ Pedido 'confirmado': prefere finished_amount/estimated_finished_commission")
+
+    # caso real completo: teclado X68HE — 3792 centavos USD, comissão 3%
+    real = _parse_order({
+        "order_id": "8213456993712551", "sub_order_id": "8213456993722551",
+        "product_id": "1005008813162763", "product_title": "X68HE ATTACK SHARK",
+        "order_status": "Payment Completed", "paid_amount": "3792",
+        "commission_rate": "3.00%", "estimated_paid_commission": "113",
+        "settled_currency": "USD", "created_time": "2026-08-17 10:25:47",
+    })
+    assert abs(real["paid_amount"] - 37.92) < 0.01, "US$ 37,92 (~R$200), não 3792"
+    assert abs(real["estimated_commission"] - 1.13) < 0.01
+    print(f"  ✅ Caso real: US$ {real['paid_amount']:.2f} / comissão US$ {real['estimated_commission']:.2f}")
 
     assert _parse_order({}) is None  # sem order_id
     print("  ✅ Pedido sem order_id: None")
@@ -309,7 +332,7 @@ def test_sales_sync():
         "order_id": "TESTORDER1", "sub_order_id": "TESTORDER1", "product_id": "1005099",
         "product_title": "Produto de Teste", "order_status": "Payment Completed",
         "paid_amount": 199.90, "commission_rate": "5%", "estimated_commission": 9.99,
-        "currency": "BRL", "order_date": today, "created_time_raw": None,
+        "currency": "USD", "order_date": today, "created_time_raw": None,
         "paid_time_raw": None, "is_new_buyer": True,
     }
     upsert_affiliate_order(order)
@@ -317,7 +340,9 @@ def test_sales_sync():
     summary = get_sales_summary(days=30)
     assert summary["count"] >= 1
     assert summary["paid_total"] >= 199.90
-    print(f"  ✅ Resumo: {summary['count']} venda(s), R$ {summary['paid_total']:.2f}")
+    # o resumo não pode zerar por causa da moeda: a comissão é liquidada em USD
+    assert summary["currency"] is not None, "resumo deve informar a moeda dos totais"
+    print(f"  ✅ Resumo: {summary['count']} venda(s), {summary['currency']} {summary['paid_total']:.2f}")
 
     series = get_sales_series(days=30)
     today_bucket = next((s for s in series if str(s["order_date"]) == today), None)

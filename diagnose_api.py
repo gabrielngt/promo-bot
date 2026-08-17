@@ -139,22 +139,26 @@ def main():
         for p in _extract_products(result):
             show_prices(p)
 
-    # ── 4. Pedidos de afiliado: formato de data e paginação ──
-    print("\n══ 4. order.listbyindex — formato de data e paginação (não confirmados) ══")
+    # ── 4. Pedidos de afiliado: formato de data, paginação e valores crus ──
+    # Despeja TODO pedido dos últimos 60 dias, nos dois status, pra comparar
+    # campo a campo com o que foi parseado/gravado — útil quando um valor no
+    # painel parece errado e o dado bruto é a única forma de confirmar por quê.
+    print("\n══ 4. order.listbyindex — pedidos crus (formato de data, paginação, valores) ══")
     from datetime import datetime, timedelta, timezone
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=60)
-    data = call("aliexpress.affiliate.order.listbyindex", {
-        "start_time": start.strftime("%Y-%m-%d %H:%M:%S"),
-        "end_time": end.strftime("%Y-%m-%d %H:%M:%S"),
-        "status": "Payment Completed",
-        "page_size": "5",
-    })
-    if "error_response" in data:
-        print(f"   ❌ erro: {data['error_response']}")
-        print("   Se a mensagem reclamar do formato de start_time/end_time, ajuste")
-        print("   o strftime em sales.py e em aliexpress.get_affiliate_orders.")
-    else:
+    start_s, end_s = start.strftime("%Y-%m-%d %H:%M:%S"), end.strftime("%Y-%m-%d %H:%M:%S")
+
+    for status in ("Payment Completed", "Buyer Confirmed Receipt"):
+        print(f"\n── status = '{status}' ──")
+        data = call("aliexpress.affiliate.order.listbyindex", {
+            "start_time": start_s, "end_time": end_s, "status": status, "page_size": "20",
+        })
+        if "error_response" in data:
+            print(f"   ❌ erro: {data['error_response']}")
+            print("   Se a mensagem reclamar do formato de start_time/end_time, ajuste")
+            print("   o strftime em sales.py e em aliexpress.get_affiliate_orders.")
+            continue
         result = data.get("aliexpress_affiliate_order_listbyindex_response", {}).get("resp_result", {})
         print(f"   resp_code: {result.get('resp_code')} {result.get('resp_msg') or ''}")
         r = result.get("result", {})
@@ -165,11 +169,13 @@ def main():
         orders = r.get("orders", [])
         if isinstance(orders, dict):
             orders = orders.get("order", [])
-        if orders:
-            print(f"   Primeiro pedido cru (confira created_time e nomes dos campos de valor):")
-            print(json.dumps(orders[0], indent=2, ensure_ascii=False))
-        else:
-            print("   (nenhum pedido 'Payment Completed' nos últimos 60 dias — normal se ainda não vendeu)")
+        if not orders:
+            print(f"   (nenhum pedido '{status}' nos últimos 60 dias)")
+            continue
+        for o in orders:
+            title = str(o.get("product_title", ""))[:60]
+            print(f"\n   • {title} (order_id={o.get('order_id')})")
+            print(f"     {json.dumps(o, indent=6, ensure_ascii=False)}")
 
     print("\nPronto. Compare os preços acima com a página do produto no site/app")
     print("para ver qual campo bate com o checkout (e se o imposto está incluso).")

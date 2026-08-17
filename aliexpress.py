@@ -259,14 +259,26 @@ def _extract_date(raw_time) -> str | None:
     return m.group() if m else None
 
 
+def _parse_money_field(value) -> float:
+    """Valores monetários de order.listbyindex vêm em CENTAVOS, como inteiro
+    ("3792" = 37.92). Confirmado contra pedidos reais: paid_amount 3792 com
+    commission_rate 3% devolve estimated_commission 113 (= 1.13).
+    Se algum dia vier com separador decimal, já está em unidades — não divide."""
+    import re
+    s = str(value).strip()
+    if re.search(r"[.,]\d", s):
+        return _parse_price(s)
+    return _parse_price(s) / 100
+
+
 def _parse_order(raw: dict) -> dict | None:
     """Normaliza um pedido de aliexpress.affiliate.order.listbyindex. Prefere os
     campos 'finished_*' (valor/comissão já consolidados) e cai para 'paid_*'
     quando o pedido ainda não fechou."""
     try:
         order_id = str(raw["order_id"])
-        amount = _parse_price(raw.get("finished_amount") or raw.get("paid_amount") or "0")
-        commission = _parse_price(
+        amount = _parse_money_field(raw.get("finished_amount") or raw.get("paid_amount") or "0")
+        commission = _parse_money_field(
             raw.get("estimated_finished_commission") or raw.get("estimated_paid_commission") or "0"
         )
         created_time = raw.get("created_time") or raw.get("paid_time")

@@ -477,8 +477,9 @@ def get_active_coupons(max_age_hours: int = 72) -> list[dict]:
 
 
 # ---------- Vendas (pedidos de afiliado) ----------
-# Somas em BRL apenas: os posts do canal são todos em BRL, então um pedido em
-# outra moeda quebraria o total se somado junto sem conversão.
+# A comissão é liquidada numa moeda só (USD na conta atual), então os totais
+# somam apenas a moeda dominante do período e informam qual é — somar moedas
+# diferentes sem conversão daria um número sem significado.
 
 def upsert_affiliate_order(o: dict):
     with get_connection() as conn:
@@ -500,17 +501,31 @@ def upsert_affiliate_order(o: dict):
         )
 
 
+def get_dominant_currency(days: int = 30) -> str | None:
+    """Moeda com maior volume no período — os totais somam só ela."""
+    cutoff = (_utcnow() - timedelta(days=days)).date()
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT currency FROM affiliate_orders WHERE order_date >= %s "
+            "GROUP BY currency ORDER BY SUM(paid_amount) DESC NULLS LAST LIMIT 1",
+            (cutoff,),
+        ).fetchone()
+    return row["currency"] if row else None
+
+
 def get_sales_summary(days: int = 30) -> dict:
     cutoff = (_utcnow() - timedelta(days=days)).date()
+    currency = get_dominant_currency(days)
     with get_connection() as conn:
         row = conn.execute(
             "SELECT COUNT(*) AS count, COALESCE(SUM(paid_amount),0) AS paid_total, "
             "COALESCE(SUM(estimated_commission),0) AS commission_total "
-            "FROM affiliate_orders WHERE order_date >= %s AND currency = 'BRL'",
-            (cutoff,),
+            "FROM affiliate_orders WHERE order_date >= %s AND currency IS NOT DISTINCT FROM %s",
+            (cutoff, currency),
         ).fetchone()
     return {
         "days": days,
+        "currency": currency,
         "count": row["count"],
         "paid_total": row["paid_total"],
         "commission_total": row["commission_total"],
@@ -518,14 +533,16 @@ def get_sales_summary(days: int = 30) -> dict:
 
 
 def get_sales_series(days: int = 30) -> list[dict]:
-    """Receita por dia (só dias com pedido — o painel completa os dias vazios)."""
+    """Receita por dia na moeda dominante (só dias com pedido — o painel
+    completa os dias vazios)."""
     cutoff = (_utcnow() - timedelta(days=days)).date()
+    currency = get_dominant_currency(days)
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT order_date, COUNT(*) AS count, COALESCE(SUM(paid_amount),0) AS paid_total "
-            "FROM affiliate_orders WHERE order_date >= %s AND currency = 'BRL' "
+            "FROM affiliate_orders WHERE order_date >= %s AND currency IS NOT DISTINCT FROM %s "
             "GROUP BY order_date ORDER BY order_date",
-            (cutoff,),
+            (cutoff, currency),
         ).fetchall()
     return list(rows)
 

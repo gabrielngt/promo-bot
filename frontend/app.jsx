@@ -156,9 +156,12 @@ const LS_AUTH = "promobot.auth";
 const loadAuth = () => { try { return JSON.parse(localStorage.getItem(LS_AUTH)); } catch { return null; } };
 const saveAuth = (v) => { try { localStorage.setItem(LS_AUTH, JSON.stringify(v)); } catch {} };
 const fmt = (n) => n > 0 ? "R$ " + n.toFixed(2).replace(".", ",") : "—";
-// variante que mostra R$ 0,00 em vez de "—" — zero é um valor real em vendas
-// (nenhuma venda no período), diferente de "sem preço definido"
-const fmtMoney = (n) => "R$ " + (n ?? 0).toFixed(2).replace(".", ",");
+// variante que mostra 0,00 em vez de "—" — zero é um valor real em vendas
+// (nenhuma venda no período), diferente de "sem preço definido".
+// A comissão de afiliado é liquidada em USD, então o símbolo vem do dado.
+const CURRENCY_SYMBOLS = { BRL: "R$", USD: "US$", EUR: "€" };
+const fmtMoney = (n, currency) =>
+  (CURRENCY_SYMBOLS[currency] || currency || "R$") + " " + (n ?? 0).toFixed(2).replace(".", ",");
 const timeAgo = (iso) => {
   if (!iso) return "nunca";
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -962,7 +965,7 @@ function niceCeil(v) {
   return 10 * mag;
 }
 
-function SalesChart({ series, days }) {
+function SalesChart({ series, days, currency }) {
   // completa os dias sem pedido com paid_total=0, pra barra aparecer no lugar certo
   const byDate = new Map(series.map((d) => [d.order_date, d]));
   const points = [];
@@ -997,7 +1000,7 @@ function SalesChart({ series, days }) {
         <line x1={padL} y1={baseline} x2={W - padR} y2={baseline} stroke="var(--border-soft)" strokeWidth="1" />
         <line x1={padL} y1={padT} x2={W - padR} y2={padT} stroke="var(--border-soft)" strokeWidth="1" />
         <text x={W - padR} y={padT - 5} textAnchor="end" fontSize="10.5" fill="var(--muted-2)" fontFamily="var(--mono)">
-          {fmtMoney(max)}
+          {fmtMoney(max, currency)}
         </text>
 
         {points.map((p, i) => {
@@ -1009,7 +1012,7 @@ function SalesChart({ series, days }) {
             <g key={p.date}
                onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover((v) => (v === i ? null : v))}
                onFocus={() => setHover(i)} onBlur={() => setHover((v) => (v === i ? null : v))}
-               tabIndex={0} role="img" aria-label={`${p.date}: ${fmtMoney(p.paid_total)}, ${p.count} venda(s)`}>
+               tabIndex={0} role="img" aria-label={`${p.date}: ${fmtMoney(p.paid_total, currency)}, ${p.count} venda(s)`}>
               {/* hit target maior que a barra, pra facilitar o hover */}
               <rect x={x - (slot - barW) / 2} y={padT} width={slot} height={baseline - padT} fill="transparent" />
               <path d={topRoundedBarPath(x, y, barW, h, 4)}
@@ -1027,7 +1030,7 @@ function SalesChart({ series, days }) {
 
       {hover != null && (
         <div className="chart-tooltip" style={{ left: `${((xOf(hover) + barW / 2) / W) * 100}%` }}>
-          <div className="chart-tooltip-value">{fmtMoney(points[hover].paid_total)}</div>
+          <div className="chart-tooltip-value">{fmtMoney(points[hover].paid_total, currency)}</div>
           <div className="chart-tooltip-label">
             {new Date(points[hover].date + "T00:00:00").toLocaleDateString("pt-BR")} · {points[hover].count} venda{points[hover].count === 1 ? "" : "s"}
           </div>
@@ -1080,11 +1083,11 @@ function Vendas({ api, showToast }) {
         </div>
         <div className="card sales-stat">
           <span className="label">Valor total</span>
-          <span className="stat-value">{loading ? "…" : fmtMoney(summary?.paid_total)}</span>
+          <span className="stat-value">{loading ? "…" : fmtMoney(summary?.paid_total, summary?.currency)}</span>
         </div>
         <div className="card sales-stat">
           <span className="label">Comissão estimada</span>
-          <span className="stat-value accent">{loading ? "…" : fmtMoney(summary?.commission_total)}</span>
+          <span className="stat-value accent">{loading ? "…" : fmtMoney(summary?.commission_total, summary?.currency)}</span>
         </div>
       </div>
 
@@ -1092,7 +1095,7 @@ function Vendas({ api, showToast }) {
         {loading ? (
           <div className="empty"><div className="empty-sub">Carregando...</div></div>
         ) : (
-          <SalesChart series={data.series} days={days} />
+          <SalesChart series={data.series} days={days} currency={summary?.currency} />
         )}
       </div>
 
@@ -1129,8 +1132,8 @@ function Vendas({ api, showToast }) {
                   </td>
                   <td className="muted-cell">{o.order_status || "—"}</td>
                   <td className="muted-cell">{o.order_date ? new Date(o.order_date + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
-                  <td className="num-col price">{fmtMoney(o.paid_amount)}</td>
-                  <td className="num-col price">{fmtMoney(o.estimated_commission)}</td>
+                  <td className="num-col price">{fmtMoney(o.paid_amount, o.currency)}</td>
+                  <td className="num-col price">{fmtMoney(o.estimated_commission, o.currency)}</td>
                 </tr>
               ))}
             </tbody>
