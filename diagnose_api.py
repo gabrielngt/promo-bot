@@ -1,11 +1,14 @@
 """
 Sonda da API de afiliados — somente leitura, NÃO posta e NÃO grava nada.
 
-Despeja os campos crus que a API retorna para responder três perguntas:
+Despeja os campos crus que a API retorna para responder quatro perguntas:
   1. Quais campos de preço existem e qual bate com o checkout
      (target_sale_price vs target_app_sale_price; efeito do ship_to_country)?
   2. Em que formato/idioma vem o promo_code_info.code_value dos cupons?
   3. Quais campanhas o featuredpromo.get lista e como vêm os produtos?
+  4. order.listbyindex: start_time/end_time aceitam 'yyyy-MM-dd HH:mm:ss'?
+     Qual é o campo de paginação de verdade na resposta? (sales.py assume um
+     formato não confirmado pela documentação — ver aliexpress.get_affiliate_orders)
 
 O app tem whitelist de IP na AliExpress, então rode ONDE O BOT RODA
 (console SSH/Kudu do Azure App Service):
@@ -135,6 +138,38 @@ def main():
         print(f"   resp_code: {result.get('resp_code')} {result.get('resp_msg') or ''}")
         for p in _extract_products(result):
             show_prices(p)
+
+    # ── 4. Pedidos de afiliado: formato de data e paginação ──
+    print("\n══ 4. order.listbyindex — formato de data e paginação (não confirmados) ══")
+    from datetime import datetime, timedelta, timezone
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=60)
+    data = call("aliexpress.affiliate.order.listbyindex", {
+        "start_time": start.strftime("%Y-%m-%d %H:%M:%S"),
+        "end_time": end.strftime("%Y-%m-%d %H:%M:%S"),
+        "status": "Payment Completed",
+        "page_size": "5",
+    })
+    if "error_response" in data:
+        print(f"   ❌ erro: {data['error_response']}")
+        print("   Se a mensagem reclamar do formato de start_time/end_time, ajuste")
+        print("   o strftime em sales.py e em aliexpress.get_affiliate_orders.")
+    else:
+        result = data.get("aliexpress_affiliate_order_listbyindex_response", {}).get("resp_result", {})
+        print(f"   resp_code: {result.get('resp_code')} {result.get('resp_msg') or ''}")
+        r = result.get("result", {})
+        print("   Campos de nível 'result' (procure aqui o cursor de paginação):")
+        for k, v in r.items():
+            if k != "orders":
+                print(f"      {k} = {v}")
+        orders = r.get("orders", [])
+        if isinstance(orders, dict):
+            orders = orders.get("order", [])
+        if orders:
+            print(f"   Primeiro pedido cru (confira created_time e nomes dos campos de valor):")
+            print(json.dumps(orders[0], indent=2, ensure_ascii=False))
+        else:
+            print("   (nenhum pedido 'Payment Completed' nos últimos 60 dias — normal se ainda não vendeu)")
 
     print("\nPronto. Compare os preços acima com a página do produto no site/app")
     print("para ver qual campo bate com o checkout (e se o imposto está incluso).")

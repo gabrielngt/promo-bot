@@ -249,6 +249,103 @@ def get_featured_promo_products(promo_name: str, page: int = 1, page_size: int =
         return []
 
 
+def _extract_date(raw_time) -> str | None:
+    """Extrai 'YYYY-MM-DD' do início de um timestamp em qualquer formato textual
+    comum (ISO, 'yyyy-MM-dd HH:mm:ss'...). None se não reconhecer."""
+    import re
+    if not raw_time:
+        return None
+    m = re.match(r"\d{4}-\d{2}-\d{2}", str(raw_time).strip())
+    return m.group() if m else None
+
+
+def _parse_order(raw: dict) -> dict | None:
+    """Normaliza um pedido de aliexpress.affiliate.order.listbyindex. Prefere os
+    campos 'finished_*' (valor/comissão já consolidados) e cai para 'paid_*'
+    quando o pedido ainda não fechou."""
+    try:
+        order_id = str(raw["order_id"])
+        amount = _parse_price(raw.get("finished_amount") or raw.get("paid_amount") or "0")
+        commission = _parse_price(
+            raw.get("estimated_finished_commission") or raw.get("estimated_paid_commission") or "0"
+        )
+        created_time = raw.get("created_time") or raw.get("paid_time")
+        return {
+            "order_id": order_id,
+            "sub_order_id": str(raw.get("sub_order_id") or order_id),
+            "product_id": str(raw.get("product_id", "")),
+            "product_title": raw.get("product_title", ""),
+            "order_status": raw.get("order_status", ""),
+            "paid_amount": amount,
+            "commission_rate": raw.get("commission_rate", ""),
+            "estimated_commission": commission,
+            "currency": raw.get("settled_currency") or "BRL",
+            "order_date": _extract_date(created_time),
+            "created_time_raw": str(created_time) if created_time else None,
+            "paid_time_raw": str(raw.get("paid_time")) if raw.get("paid_time") else None,
+            "is_new_buyer": str(raw.get("is_new_buyer", "")).strip().lower() in ("true", "1"),
+        }
+    except Exception as e:
+        print(f"[AliExpress] Erro ao parsear pedido {raw.get('order_id')}: {e}")
+        return None
+
+
+def get_affiliate_orders(
+    start_time: str, end_time: str, status: str, page_index: str | None = None, page_size: int = 50
+) -> tuple[list[dict], str | None]:
+    """Advanced API: aliexpress.affiliate.order.listbyindex — pedidos/comissões
+    de afiliado num intervalo. status é obrigatório e não aceita múltiplos
+    valores; consultar um de cada vez (ver sales.ORDER_STATUSES).
+
+    NOTA: o formato de start_time/end_time não é fixado na documentação —
+    assumido aqui como 'yyyy-MM-dd HH:mm:ss' (padrão comum nas APIs Alibaba).
+    O nome do campo de paginação na resposta também não está confirmado
+    (assumido 'start_query_index_id' ecoado de volta). Validar os dois com
+    diagnose_api.py rodando no servidor antes de confiar cegamente na paginação
+    além da primeira página.
+
+    Retorna (pedidos_parseados, próximo_page_index) — próximo é None quando
+    não há mais páginas (ou em erro)."""
+    params = _base_params("aliexpress.affiliate.order.listbyindex")
+    params.update({
+        "start_time": start_time,
+        "end_time": end_time,
+        "status": status,
+        "page_size": str(page_size),
+    })
+    if page_index:
+        params["start_query_index_id"] = page_index
+    params["sign"] = _sign(params)
+    try:
+        resp = requests.post(API_URL, data=params, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+        if "error_response" in data:
+            print(f"[AliExpress] order.listbyindex error: {data['error_response']}")
+            return [], None
+        result = (
+            data
+            .get("aliexpress_affiliate_order_listbyindex_response", {})
+            .get("resp_result", {})
+        )
+        if result.get("resp_code") != 200:
+            print(f"[AliExpress] order.listbyindex ({status}): {result.get('resp_msg')}")
+            return [], None
+        r = result.get("result", {})
+        raw_orders = r.get("orders", [])
+        if isinstance(raw_orders, dict):
+            raw_orders = raw_orders.get("order", [])
+        raw_orders = raw_orders or []
+        orders = [o for o in (_parse_order(x) for x in raw_orders) if o]
+        # heurística de paginação (não confirmada — ver nota acima): menos
+        # registros que o page_size pedido = última página.
+        next_index = r.get("start_query_index_id") if len(raw_orders) >= page_size else None
+        return orders, next_index
+    except Exception as e:
+        print(f"[AliExpress] Exceção em order.listbyindex: {e}")
+        return [], None
+
+
 def get_product_detail(product_id: str) -> dict | None:
     """Advanced API: aliexpress.affiliate.productdetail.get — busca exata por ID."""
     params = _base_params("aliexpress.affiliate.productdetail.get")

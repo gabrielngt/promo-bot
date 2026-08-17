@@ -216,6 +216,13 @@ def test_campaign_coupons():
     assert _parse_campaign_entry("R$ 28,00 off sem codigo nenhum") is None
     print("  ✅ Formato livre: extrai código/mínimo/desconto de texto colado")
 
+    # linha de central de cupons, com validade — o ano/hora não pode virar "gasto mínimo"
+    c = _parse_campaign_entry("AFS3 $3 off $15 2026-08-26 23:59:59")
+    assert c == {"code": "AFS3", "min_spend": 15.0, "discount": 3.0}
+    c = _parse_campaign_entry("AFS90 $90 off $550 2026-08-26 23:59:59")
+    assert c == {"code": "AFS90", "min_spend": 550.0, "discount": 90.0}
+    print("  ✅ Data de validade na linha não confunde o cálculo (ano != gasto mínimo)")
+
     settings = {
         "import_tax_rate": 0.0,
         "icms_rate": 0.17,
@@ -250,6 +257,88 @@ def test_campaign_coupons():
         print("  ✅ Cupom do anúncio (R$ 40) vence a campanha (R$ 28)")
     finally:
         monitor_mod.get_active_coupons = orig_active
+
+
+def test_order_parser():
+    print("\n--- Teste: aliexpress._parse_order / _extract_date ---")
+    from aliexpress import _parse_order, _extract_date
+
+    assert _extract_date("2026-08-15 10:30:00") == "2026-08-15"
+    assert _extract_date("2026-08-15T10:30:00Z") == "2026-08-15"
+    assert _extract_date(None) is None
+    assert _extract_date("data invalida") is None
+    print("  ✅ _extract_date: formatos comuns reconhecidos, inválido → None")
+
+    # pedido "pago" (ainda não confirmado) → usa os campos paid_*
+    raw_paid = {
+        "order_id": "800123", "product_id": "1005006789", "product_title": "Mouse Teste",
+        "order_status": "Payment Completed", "paid_amount": "150.00", "commission_rate": "5%",
+        "estimated_paid_commission": "7.50", "settled_currency": "BRL",
+        "created_time": "2026-08-10 12:00:00", "is_new_buyer": "true",
+    }
+    o = _parse_order(raw_paid)
+    assert o["order_id"] == "800123" and o["sub_order_id"] == "800123"  # sem sub_order_id → usa order_id
+    assert abs(o["paid_amount"] - 150.0) < 0.01
+    assert abs(o["estimated_commission"] - 7.50) < 0.01
+    assert o["order_date"] == "2026-08-10"
+    assert o["is_new_buyer"] is True
+    print("  ✅ Pedido 'pago': usa paid_amount/estimated_paid_commission")
+
+    # pedido "confirmado" → prefere os campos finished_* sobre os paid_*
+    raw_finished = {**raw_paid, "sub_order_id": "800123-1",
+                    "finished_amount": "148.00", "estimated_finished_commission": "7.40"}
+    o2 = _parse_order(raw_finished)
+    assert o2["sub_order_id"] == "800123-1"
+    assert abs(o2["paid_amount"] - 148.0) < 0.01, "deve preferir finished_amount sobre paid_amount"
+    assert abs(o2["estimated_commission"] - 7.40) < 0.01
+    print("  ✅ Pedido 'confirmado': prefere finished_amount/estimated_finished_commission")
+
+    assert _parse_order({}) is None  # sem order_id
+    print("  ✅ Pedido sem order_id: None")
+
+
+def test_sales_sync():
+    print("\n--- Teste: sincronização de vendas (via banco) ---")
+    from database import init_db, upsert_affiliate_order, get_sales_summary, get_sales_series, get_recent_orders, get_connection
+    from datetime import datetime, timezone
+
+    init_db()
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    order = {
+        "order_id": "TESTORDER1", "sub_order_id": "TESTORDER1", "product_id": "1005099",
+        "product_title": "Produto de Teste", "order_status": "Payment Completed",
+        "paid_amount": 199.90, "commission_rate": "5%", "estimated_commission": 9.99,
+        "currency": "BRL", "order_date": today, "created_time_raw": None,
+        "paid_time_raw": None, "is_new_buyer": True,
+    }
+    upsert_affiliate_order(order)
+
+    summary = get_sales_summary(days=30)
+    assert summary["count"] >= 1
+    assert summary["paid_total"] >= 199.90
+    print(f"  ✅ Resumo: {summary['count']} venda(s), R$ {summary['paid_total']:.2f}")
+
+    series = get_sales_series(days=30)
+    today_bucket = next((s for s in series if str(s["order_date"]) == today), None)
+    assert today_bucket is not None and today_bucket["count"] >= 1
+    print(f"  ✅ Série diária inclui o pedido de hoje: {today_bucket['count']} venda(s)")
+
+    recent = get_recent_orders(limit=10)
+    assert any(o["order_id"] == "TESTORDER1" for o in recent)
+    print("  ✅ Pedido aparece em get_recent_orders")
+
+    # upsert de novo com valor atualizado (pedido avançou de status) → substitui, não duplica
+    upsert_affiliate_order({**order, "order_status": "Buyer Confirmed Receipt", "paid_amount": 189.90})
+    recent2 = get_recent_orders(limit=10)
+    updated = next(o for o in recent2 if o["order_id"] == "TESTORDER1")
+    assert abs(updated["paid_amount"] - 189.90) < 0.01
+    assert len([o for o in recent2 if o["order_id"] == "TESTORDER1"]) == 1
+    print("  ✅ Upsert atualiza o pedido existente em vez de duplicar")
+
+    with get_connection() as conn:
+        conn.execute("DELETE FROM affiliate_orders WHERE order_id = 'TESTORDER1'")
+    print("  ✅ Sales sync OK")
 
 
 def test_coupon_harvest():
@@ -417,6 +506,8 @@ if __name__ == "__main__":
     test_checkout_total()
     test_checkout_price_target()
     test_campaign_coupons()
+    test_order_parser()
+    test_sales_sync()
     test_coupon_harvest()
     test_telegram_message_format()
     test_cold_start_logic()

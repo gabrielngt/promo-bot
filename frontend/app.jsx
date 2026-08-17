@@ -88,6 +88,7 @@ function makeApi(baseUrl, apiKey) {
     saveSettings:  (d)          => req("PUT",    "/api/settings", d),
     getStatus:     ()           => req("GET",    "/api/status"),
     getCoupons:    ()           => req("GET",    "/api/coupons"),
+    getSales:      (days)       => req("GET",    `/api/sales?days=${days}`),
     runNow:        ()           => req("POST",   "/api/run"),
   };
 }
@@ -155,6 +156,9 @@ const LS_AUTH = "promobot.auth";
 const loadAuth = () => { try { return JSON.parse(localStorage.getItem(LS_AUTH)); } catch { return null; } };
 const saveAuth = (v) => { try { localStorage.setItem(LS_AUTH, JSON.stringify(v)); } catch {} };
 const fmt = (n) => n > 0 ? "R$ " + n.toFixed(2).replace(".", ",") : "—";
+// variante que mostra R$ 0,00 em vez de "—" — zero é um valor real em vendas
+// (nenhuma venda no período), diferente de "sem preço definido"
+const fmtMoney = (n) => "R$ " + (n ?? 0).toFixed(2).replace(".", ",");
 const timeAgo = (iso) => {
   if (!iso) return "nunca";
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -785,8 +789,10 @@ function Configuracoes({ api, showToast }) {
             <div className="setting-meta">
               <label className="field-label">Cupons de campanha (manuais)</label>
               <div className="field-hint" style={{ marginTop: 2 }}>
-                Cole uma campanha por linha, em qualquer formato — o bot entende
-                <code> BRT28 141 28</code> e também texto do portal, tipo
+                Cole uma campanha por linha, em qualquer formato — inclusive direto da
+                central de cupons do site (logado na sua conta BR, pra pegar os valores em R$ certos),
+                com data de validade e tudo: <code>AFS3 $3 off $15 2026-08-26 23:59:59</code>.
+                Também aceita <code>BRT28 141 28</code> ou texto livre tipo
                 "Código BRT28 — compras acima de R$ 141,00: R$ 28,00 OFF".
                 Além destes, o bot <b>descobre cupons sozinho</b> nos anúncios que escaneia
                 e aplica o de maior desconto em cada post.
@@ -934,10 +940,212 @@ function Configuracoes({ api, showToast }) {
   );
 }
 
+/* ── Vendas ── */
+const SALES_PERIODS = [7, 30, 90];
+
+// Path com cantos arredondados só no topo (4px), reto na base — "data-end
+// arredondado, quadrado na baseline" do spec de marcas.
+function topRoundedBarPath(x, y, w, h, r) {
+  if (h <= 0) return "";
+  r = Math.min(r, w / 2, h);
+  return `M${x},${y + h} L${x},${y + r} Q${x},${y} ${x + r},${y} `
+       + `L${x + w - r},${y} Q${x + w},${y} ${x + w},${y + r} L${x + w},${y + h} Z`;
+}
+
+// Y-tick "redondo": maior número limpo (1/2/5 × 10^n) que cabe acima do valor máximo.
+function niceCeil(v) {
+  if (v <= 0) return 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const step of [1, 2, 5, 10]) {
+    if (step * mag >= v) return step * mag;
+  }
+  return 10 * mag;
+}
+
+function SalesChart({ series, days }) {
+  // completa os dias sem pedido com paid_total=0, pra barra aparecer no lugar certo
+  const byDate = new Map(series.map((d) => [d.order_date, d]));
+  const points = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    const found = byDate.get(key);
+    points.push({ date: key, count: found?.count ?? 0, paid_total: Number(found?.paid_total ?? 0) });
+  }
+
+  const W = 900, H = 220, padL = 4, padR = 4, padT = 18, padB = 26;
+  const baseline = H - padB;
+  const max = niceCeil(Math.max(...points.map((p) => p.paid_total), 0.01));
+  const n = points.length;
+  const slot = (W - padL - padR) / n;
+  const barW = Math.max(2, Math.min(24, slot - 2));
+
+  const [hover, setHover] = useState(null);
+  const hasAny = points.some((p) => p.paid_total > 0);
+
+  const xOf = (i) => padL + i * slot + (slot - barW) / 2;
+  const yScale = (v) => (max > 0 ? (v / max) * (baseline - padT) : 0);
+
+  // amostra ticks do eixo X pra não colidir (~6 labels no máximo)
+  const tickEvery = Math.max(1, Math.ceil(n / 6));
+
+  return (
+    <div style={{ position: "relative" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img" aria-label={`Receita diária, últimos ${days} dias`}>
+        {/* gridlines recessivas: baseline (0) e o topo (max arredondado) */}
+        <line x1={padL} y1={baseline} x2={W - padR} y2={baseline} stroke="var(--border-soft)" strokeWidth="1" />
+        <line x1={padL} y1={padT} x2={W - padR} y2={padT} stroke="var(--border-soft)" strokeWidth="1" />
+        <text x={W - padR} y={padT - 5} textAnchor="end" fontSize="10.5" fill="var(--muted-2)" fontFamily="var(--mono)">
+          {fmtMoney(max)}
+        </text>
+
+        {points.map((p, i) => {
+          const h = Math.max(hasAny && p.paid_total > 0 ? 2 : 0, yScale(p.paid_total));
+          const y = baseline - h;
+          const x = xOf(i);
+          const isHover = hover === i;
+          return (
+            <g key={p.date}
+               onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover((v) => (v === i ? null : v))}
+               onFocus={() => setHover(i)} onBlur={() => setHover((v) => (v === i ? null : v))}
+               tabIndex={0} role="img" aria-label={`${p.date}: ${fmtMoney(p.paid_total)}, ${p.count} venda(s)`}>
+              {/* hit target maior que a barra, pra facilitar o hover */}
+              <rect x={x - (slot - barW) / 2} y={padT} width={slot} height={baseline - padT} fill="transparent" />
+              <path d={topRoundedBarPath(x, y, barW, h, 4)}
+                    fill="var(--green)" opacity={isHover ? 1 : 0.8}
+                    style={{ transition: "opacity .1s ease" }} />
+              {i % tickEvery === 0 && (
+                <text x={x + barW / 2} y={H - 8} textAnchor="middle" fontSize="10" fill="var(--muted-2)" fontFamily="var(--mono)">
+                  {p.date.slice(5)}
+                </text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+
+      {hover != null && (
+        <div className="chart-tooltip" style={{ left: `${((xOf(hover) + barW / 2) / W) * 100}%` }}>
+          <div className="chart-tooltip-value">{fmtMoney(points[hover].paid_total)}</div>
+          <div className="chart-tooltip-label">
+            {new Date(points[hover].date + "T00:00:00").toLocaleDateString("pt-BR")} · {points[hover].count} venda{points[hover].count === 1 ? "" : "s"}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Vendas({ api, showToast }) {
+  const [days, setDays] = useState(30);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setData(await api.getSales(days));
+    } catch (err) {
+      showToast("Erro ao carregar vendas: " + err.message, "err");
+    } finally {
+      setLoading(false);
+    }
+  }, [api, days]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const summary = data?.summary;
+  const orders = data?.orders ?? [];
+
+  return (
+    <div className="page">
+      <div className="page-head">
+        <div className="page-title">Vendas</div>
+        <div className="page-desc">Pedidos e comissão rastreados pela API de afiliados da AliExpress. Sincroniza a cada ciclo do bot.</div>
+      </div>
+
+      <div className="period-toggle">
+        {SALES_PERIODS.map((p) => (
+          <button key={p} className={"period-btn" + (days === p ? " active" : "")} onClick={() => setDays(p)}>
+            {p} dias
+          </button>
+        ))}
+      </div>
+
+      <div className="sales-stats">
+        <div className="card sales-stat">
+          <span className="label">Vendas no período</span>
+          <span className="stat-value">{loading ? "…" : (summary?.count ?? 0)}</span>
+        </div>
+        <div className="card sales-stat">
+          <span className="label">Valor total</span>
+          <span className="stat-value">{loading ? "…" : fmtMoney(summary?.paid_total)}</span>
+        </div>
+        <div className="card sales-stat">
+          <span className="label">Comissão estimada</span>
+          <span className="stat-value accent">{loading ? "…" : fmtMoney(summary?.commission_total)}</span>
+        </div>
+      </div>
+
+      <div className="card chart-card">
+        {loading ? (
+          <div className="empty"><div className="empty-sub">Carregando...</div></div>
+        ) : (
+          <SalesChart series={data.series} days={days} />
+        )}
+      </div>
+
+      <div className="section-head"><div className="section-title">Pedidos recentes</div></div>
+      {orders.length === 0 && !loading ? (
+        <div className="card">
+          <div className="empty">
+            <div className="empty-icon"><Icon.box /></div>
+            <div className="empty-title">Nenhum pedido sincronizado ainda</div>
+            <div className="empty-sub">Pedidos aparecem aqui depois do primeiro ciclo com vendas rastreadas pelo link de afiliado.</div>
+          </div>
+        </div>
+      ) : (
+        <div className="card table-card">
+          <table>
+            <thead>
+              <tr>
+                <th>Produto</th>
+                <th>Status</th>
+                <th>Data</th>
+                <th className="num-col">Valor</th>
+                <th className="num-col">Comissão</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((o) => (
+                <tr key={o.order_id + "-" + o.sub_order_id}>
+                  <td>
+                    {o.product_id ? (
+                      <a className="prod-name" href={`https://www.aliexpress.com/item/${o.product_id}.html`} target="_blank" rel="noopener noreferrer">
+                        {o.product_title || "Produto #" + o.product_id}
+                      </a>
+                    ) : (o.product_title || "—")}
+                  </td>
+                  <td className="muted-cell">{o.order_status || "—"}</td>
+                  <td className="muted-cell">{o.order_date ? new Date(o.order_date + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                  <td className="num-col price">{fmtMoney(o.paid_amount)}</td>
+                  <td className="num-col price">{fmtMoney(o.estimated_commission)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── App ── */
 const TABS = [
   { id: "produtos",   label: "Produtos" },
   { id: "adicionar", label: "Adicionar produto" },
+  { id: "vendas",    label: "Vendas" },
   { id: "config",    label: "Configurações" },
 ];
 
@@ -990,6 +1198,7 @@ function App() {
 
       {tab === "produtos"   && <Produtos  api={api} showToast={showToast} />}
       {tab === "adicionar"  && <Adicionar api={api} showToast={showToast} onAdded={() => setTab("produtos")} />}
+      {tab === "vendas"     && <Vendas    api={api} showToast={showToast} />}
       {tab === "config"     && <Configuracoes api={api} showToast={showToast} />}
 
       {toast}

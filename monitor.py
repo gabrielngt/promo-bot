@@ -2,6 +2,7 @@ from config import CATEGORIES, PRODUCTS_PER_CATEGORY
 from aliexpress import get_hot_products, get_products_by_brand, parse_product, get_shipping, get_product_detail, search_products, get_featured_promos, get_featured_promo_products
 from database import upsert_product, can_post, mark_posted, get_settings, get_watchlist, get_recent_min, save_reactions, get_reactions_offset, set_reactions_offset, prune_price_history, record_check_run, save_coupon, get_active_coupons
 from telegram_bot import post_product, fetch_reaction_updates
+from sales import sync_orders
 
 import re
 import time
@@ -425,4 +426,8 @@ def _do_check():
     print(f"[Monitor] Verificação concluída. {total_posts} promoções postadas.")
     poll_reactions()
     prune_price_history()
+    try:
+        sync_orders()
+    except Exception as e:
+        print(f"[Sales] Erro ao sincronizar pedidos: {e}")
     return total_posts

@@ -9,7 +9,7 @@ from typing import Annotated
 from database import (
     get_all_products, delete_product, get_price_history,
     get_settings, update_settings, upsert_product, set_watch, set_target, clear_discovered,
-    get_status, watch_product, get_active_coupons,
+    get_status, watch_product, get_active_coupons, get_sales_summary, get_sales_series, get_recent_orders,
 )
 from aliexpress import extract_product_id, get_product_detail
 from monitor import run_check
@@ -139,6 +139,17 @@ def remove_product(product_id: str, key: str = Security(require_auth)):
 def list_coupons(key: str = Security(require_auth)):
     """Cupons de campanha descobertos automaticamente nos anúncios (últimas 72h)."""
     return get_active_coupons()
+
+
+# ---------- Vendas ----------
+
+@app.get("/api/sales")
+def sales(days: int = 30, key: str = Security(require_auth)):
+    return {
+        "summary": get_sales_summary(days),
+        "series": get_sales_series(days),
+        "orders": get_recent_orders(50),
+    }
 
 
 # ---------- Settings ----------

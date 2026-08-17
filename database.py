@@ -157,6 +157,25 @@ def init_db(keyword_defaults: list[str] | None = None):
                 last_seen   timestamptz NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS affiliate_orders (
+                order_id              TEXT NOT NULL,
+                sub_order_id          TEXT NOT NULL,
+                product_id            TEXT,
+                product_title         TEXT,
+                order_status          TEXT,
+                paid_amount           double precision,
+                commission_rate       TEXT,
+                estimated_commission  double precision,
+                currency              TEXT,
+                order_date            DATE,
+                created_time_raw      TEXT,
+                paid_time_raw         TEXT,
+                is_new_buyer          BOOLEAN,
+                synced_at             timestamptz NOT NULL,
+                PRIMARY KEY (order_id, sub_order_id)
+            )
+        """)
         for stmt in _SCHEMA_MIGRATIONS:
             conn.execute(stmt)
         defaults = dict(_DEFAULTS)
@@ -184,10 +203,14 @@ def _num(s: str) -> float:
 def _parse_campaign_entry(line: str) -> dict | None:
     """Extrai {code, min_spend, discount} de uma linha em formato livre.
     Aceita "BRT28 141 28" e também texto colado do portal, tipo
-    "Código BRT28 — compras acima de R$ 141,00: R$ 28,00 OFF".
-    Heurística do formato livre: código = token com letras E números;
-    gasto mínimo = maior valor da linha; desconto = segundo maior."""
+    "Código BRT28 — compras acima de R$ 141,00: R$ 28,00 OFF" ou uma linha de
+    central de cupons com validade ("AFS3 $3 off $15 2026-08-26 23:59:59").
+    Heurística do formato livre: remove data/hora de validade (senão o ano vira
+    "o maior número da linha" e é lido como gasto mínimo); código = token com
+    letras E números; gasto mínimo = maior valor restante; desconto = segundo maior."""
     import re
+    line = re.sub(r"\d{4}-\d{1,2}-\d{1,2}(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?", " ", line)
+    line = re.sub(r"\b\d{1,2}:\d{2}:\d{2}\b", " ", line)
     parts = line.split()
     if len(parts) == 3:
         try:
@@ -449,6 +472,71 @@ def get_active_coupons(max_age_hours: int = 72) -> list[dict]:
             "SELECT code, min_spend, discount, last_seen FROM coupons "
             "WHERE last_seen >= %s ORDER BY discount DESC",
             (cutoff,),
+        ).fetchall()
+    return list(rows)
+
+
+# ---------- Vendas (pedidos de afiliado) ----------
+# Somas em BRL apenas: os posts do canal são todos em BRL, então um pedido em
+# outra moeda quebraria o total se somado junto sem conversão.
+
+def upsert_affiliate_order(o: dict):
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO affiliate_orders (order_id, sub_order_id, product_id, product_title, "
+            "order_status, paid_amount, commission_rate, estimated_commission, currency, "
+            "order_date, created_time_raw, paid_time_raw, is_new_buyer, synced_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "ON CONFLICT (order_id, sub_order_id) DO UPDATE SET "
+            "order_status=EXCLUDED.order_status, paid_amount=EXCLUDED.paid_amount, "
+            "commission_rate=EXCLUDED.commission_rate, estimated_commission=EXCLUDED.estimated_commission, "
+            "currency=EXCLUDED.currency, order_date=EXCLUDED.order_date, "
+            "created_time_raw=EXCLUDED.created_time_raw, paid_time_raw=EXCLUDED.paid_time_raw, "
+            "is_new_buyer=EXCLUDED.is_new_buyer, synced_at=EXCLUDED.synced_at",
+            (o["order_id"], o["sub_order_id"], o.get("product_id"), o.get("product_title"),
+             o.get("order_status"), o.get("paid_amount"), o.get("commission_rate"),
+             o.get("estimated_commission"), o.get("currency"), o.get("order_date"),
+             o.get("created_time_raw"), o.get("paid_time_raw"), o.get("is_new_buyer"), _utcnow()),
+        )
+
+
+def get_sales_summary(days: int = 30) -> dict:
+    cutoff = (_utcnow() - timedelta(days=days)).date()
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS count, COALESCE(SUM(paid_amount),0) AS paid_total, "
+            "COALESCE(SUM(estimated_commission),0) AS commission_total "
+            "FROM affiliate_orders WHERE order_date >= %s AND currency = 'BRL'",
+            (cutoff,),
+        ).fetchone()
+    return {
+        "days": days,
+        "count": row["count"],
+        "paid_total": row["paid_total"],
+        "commission_total": row["commission_total"],
+    }
+
+
+def get_sales_series(days: int = 30) -> list[dict]:
+    """Receita por dia (só dias com pedido — o painel completa os dias vazios)."""
+    cutoff = (_utcnow() - timedelta(days=days)).date()
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT order_date, COUNT(*) AS count, COALESCE(SUM(paid_amount),0) AS paid_total "
+            "FROM affiliate_orders WHERE order_date >= %s AND currency = 'BRL' "
+            "GROUP BY order_date ORDER BY order_date",
+            (cutoff,),
+        ).fetchall()
+    return list(rows)
+
+
+def get_recent_orders(limit: int = 50) -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT order_id, sub_order_id, product_id, product_title, order_status, "
+            "paid_amount, estimated_commission, currency, order_date "
+            "FROM affiliate_orders ORDER BY order_date DESC NULLS LAST, synced_at DESC LIMIT %s",
+            (limit,),
         ).fetchall()
     return list(rows)
 

@@ -368,6 +368,37 @@
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+  /* Vendas */
+  .period-toggle { display: flex; gap: 8px; margin-bottom: 20px; }
+  .period-btn {
+    font-family: var(--font); font-size: 13px; font-weight: 500;
+    background: var(--card); color: var(--muted); border: 1px solid var(--border-soft);
+    border-radius: 8px; padding: 7px 14px; cursor: pointer;
+    transition: background .14s ease, color .14s ease, border-color .14s ease;
+  }
+  .period-btn:hover { color: var(--text); background: var(--card-2); }
+  .period-btn.active { color: #fff; background: var(--accent); border-color: var(--accent); }
+
+  .sales-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 20px; }
+  .sales-stat { padding: 18px 20px; display: flex; flex-direction: column; gap: 8px; }
+  .sales-stat .label { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-2); }
+  .sales-stat .stat-value { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; color: var(--text); }
+  .sales-stat .stat-value.accent { color: var(--green); }
+
+  .chart-card { padding: 20px 20px 8px; margin-bottom: 24px; }
+  .chart-tooltip {
+    position: absolute; top: 4px; transform: translateX(-50%);
+    background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 12px; box-shadow: var(--shadow);
+    pointer-events: none; white-space: nowrap; z-index: 5;
+  }
+  .chart-tooltip-value { font-family: var(--mono); font-size: 13.5px; font-weight: 600; color: var(--text); }
+  .chart-tooltip-label { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+
+  @media (max-width: 640px) {
+    .sales-stats { grid-template-columns: 1fr; }
+  }
+
   /* Brand entries */
   .brand-entry {
     border: 1px solid var(--border-soft);
