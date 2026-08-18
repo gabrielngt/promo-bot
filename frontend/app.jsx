@@ -88,6 +88,8 @@ function makeApi(baseUrl, apiKey) {
     saveSettings:  (d)          => req("PUT",    "/api/settings", d),
     getStatus:     ()           => req("GET",    "/api/status"),
     getCoupons:    ()           => req("GET",    "/api/coupons"),
+    addCoupon:     (c)          => req("POST",   "/api/coupons", c),
+    deleteCoupon:  (code)       => req("DELETE", `/api/coupons/${encodeURIComponent(code)}`),
     getSales:      (days)       => req("GET",    `/api/sales?days=${days}`),
     excludeOrder:  (oid, sid, excluded) => req("PUT", `/api/sales/${oid}/${sid}/excluded`, { excluded }),
     runNow:        ()           => req("POST",   "/api/run"),
@@ -647,14 +649,52 @@ function Configuracoes({ api, showToast }) {
   const [savedFlash, setSavedFlash] = useState(false);
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
 
-  const [autoCoupons, setAutoCoupons] = useState([]);
+  const [coupons, setCoupons] = useState([]);
+  const [cpForm, setCpForm] = useState({ code: "", min_spend: "", discount: "", expires_at: "" });
+  const [cpSaving, setCpSaving] = useState(false);
+
+  const loadCoupons = useCallback(() => {
+    api.getCoupons().then(setCoupons).catch(() => {});
+  }, [api]);
 
   useEffect(() => {
     api.getSettings()
       .then((s) => setDraft(fromApi(s)))
       .catch((err) => showToast("Erro ao carregar configurações: " + err.message, "err"));
-    api.getCoupons().then(setAutoCoupons).catch(() => {});
-  }, [api]);
+    loadCoupons();
+  }, [api, loadCoupons]);
+
+  // cupons salvam na hora (têm botão próprio) — não dependem do "Salvar configurações"
+  const addCoupon = async () => {
+    const code = cpForm.code.trim();
+    if (!code) { showToast("Informe o código do cupom.", "err"); return; }
+    setCpSaving(true);
+    try {
+      await api.addCoupon({
+        code,
+        min_spend: Number(cpForm.min_spend || 0),
+        discount: Number(cpForm.discount || 0),
+        expires_at: cpForm.expires_at || null,
+      });
+      setCpForm({ code: "", min_spend: "", discount: "", expires_at: "" });
+      showToast("Cupom adicionado.");
+      loadCoupons();
+    } catch (err) {
+      showToast("Erro: " + err.message, "err");
+    } finally {
+      setCpSaving(false);
+    }
+  };
+
+  const removeCoupon = async (code) => {
+    try {
+      await api.deleteCoupon(code);
+      showToast("Cupom removido.");
+      loadCoupons();
+    } catch (err) {
+      showToast("Erro: " + err.message, "err");
+    }
+  };
 
   const [newBrandInput, setNewBrandInput] = useState("");
   const [brandKwInputs, setBrandKwInputs] = useState({});
@@ -797,30 +837,49 @@ function Configuracoes({ api, showToast }) {
 
           <div className="setting-row" style={{ gridTemplateColumns: "1fr", paddingBottom: 4 }}>
             <div className="setting-meta">
-              <label className="field-label">Cupons de campanha (manuais)</label>
+              <label className="field-label">Cupons de campanha</label>
               <div className="field-hint" style={{ marginTop: 2 }}>
-                Cole uma campanha por linha, em qualquer formato — inclusive direto da
-                central de cupons do site (logado na sua conta BR, pra pegar os valores em R$ certos),
-                com data de validade e tudo: <code>AFS3 $3 off $15 2026-08-26 23:59:59</code>.
-                Também aceita <code>BRT28 141 28</code> ou texto livre tipo
-                "Código BRT28 — compras acima de R$ 141,00: R$ 28,00 OFF".
-                Além destes, o bot <b>descobre cupons sozinho</b> nos anúncios que escaneia
-                e aplica o de maior desconto em cada post.
+                Cupons que o bot aplica nos posts. Os <b>manuais</b> você adiciona aqui (com validade,
+                se quiser — vencido, sai sozinho). Os <b>automáticos</b> são descobertos nos anúncios
+                que o bot escaneia e valem por 72h desde a última vez que foram vistos.
               </div>
             </div>
-            <textarea className="input" rows={3} style={{ resize: "vertical", fontFamily: "inherit" }}
-              placeholder={"BRT28 141 28\nCódigo BRT56 — compras acima de R$ 282,00: R$ 56,00 OFF"}
-              value={draft.campaigns} onChange={(e) => set({ campaigns: e.target.value })} />
-            {autoCoupons.length > 0 && (
-              <div style={{ marginTop: 8 }}>
-                <div className="field-hint">Descobertos automaticamente nos anúncios (últimas 72h):</div>
-                <div className="tags-wrap" style={{ marginTop: 4 }}>
-                  {autoCoupons.map((c) => (
-                    <span className="tag" key={c.code} title={`Gasto mínimo R$ ${Number(c.min_spend).toFixed(2)}`}>
-                      {c.code} · −R$ {Number(c.discount).toFixed(2)}
+            <div className="coupon-form">
+              <input className="input" placeholder="Código" value={cpForm.code}
+                onChange={(e) => setCpForm({ ...cpForm, code: e.target.value })} />
+              <input className="input mono" type="number" min="0" step="0.01" placeholder="Gasto mín."
+                value={cpForm.min_spend} onChange={(e) => setCpForm({ ...cpForm, min_spend: e.target.value })} />
+              <input className="input mono" type="number" min="0" step="0.01" placeholder="Desconto"
+                value={cpForm.discount} onChange={(e) => setCpForm({ ...cpForm, discount: e.target.value })} />
+              <input className="input mono" type="date" title="Validade (opcional)"
+                value={cpForm.expires_at} onChange={(e) => setCpForm({ ...cpForm, expires_at: e.target.value })} />
+              <button type="button" className="btn btn-secondary" onClick={addCoupon} disabled={cpSaving}>
+                <Icon.plus /> Adicionar
+              </button>
+            </div>
+
+            {coupons.length === 0 ? (
+              <div className="no-tags" style={{ marginTop: 10 }}>Nenhum cupom ativo no momento.</div>
+            ) : (
+              <div className="coupon-list">
+                {coupons.map((c) => (
+                  <div className={"coupon-row" + (c.active ? "" : " expired")} key={c.code}>
+                    <span className="coupon-code">{c.code}</span>
+                    <span className="coupon-vals">
+                      −R$ {Number(c.discount).toFixed(2)} · mín. R$ {Number(c.min_spend).toFixed(2)}
                     </span>
-                  ))}
-                </div>
+                    <span className={"coupon-src" + (c.source === "manual" ? " manual" : "")}>
+                      {c.source === "manual" ? "manual" : "auto"}
+                    </span>
+                    <span className="coupon-exp">
+                      {c.expires_at
+                        ? (c.active ? "vence " : "venceu ") + new Date(c.expires_at).toLocaleDateString("pt-BR")
+                        : (c.source === "manual" ? "sem validade" : "")}
+                    </span>
+                    <button type="button" className="btn btn-ghost-danger" title="Remover cupom"
+                      onClick={() => removeCoupon(c.code)}><Icon.trash /></button>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -1099,7 +1158,7 @@ function Vendas({ api, showToast }) {
           <span className="stat-value">{loading ? "…" : (summary?.count ?? 0)}</span>
         </div>
         <div className="card sales-stat">
-          <span className="label">Valor total</span>
+          <span className="label" title="Soma da base de comissão — valor do produto antes dos cupons do comprador">Valor base</span>
           <span className="stat-value">{loading ? "…" : fmtMoney(summary?.paid_total, summary?.currency)}</span>
         </div>
         <div className="card sales-stat">
@@ -1121,6 +1180,8 @@ function Vendas({ api, showToast }) {
         <div className="field-hint" style={{ marginTop: 4 }}>
           A AliExpress liquida em dólar; os valores acima já estão convertidos
           {summary?.usd_brl_rate ? ` (US$ 1 = R$ ${Number(summary.usd_brl_rate).toFixed(2)})` : ""}.
+          A coluna <b>Base</b> é o valor sobre o qual sua comissão é calculada — é o preço do produto
+          <b> antes</b> dos cupons do comprador, então é maior do que ele pagou no checkout.
           Compras próprias não geram comissão e a API não as identifica — use o ✕ para tirá-las dos totais.
         </div>
       </div>
@@ -1140,7 +1201,7 @@ function Vendas({ api, showToast }) {
                 <th>Produto</th>
                 <th>Status</th>
                 <th>Data</th>
-                <th className="num-col">Valor</th>
+                <th className="num-col" title="Base usada pela AliExpress para calcular sua comissão. É o valor do produto ANTES dos cupons que o comprador aplicou, então costuma ser maior do que ele pagou de fato.">Base ⓘ</th>
                 <th className="num-col">Comissão</th>
                 <th className="actions-col"></th>
               </tr>

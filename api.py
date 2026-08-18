@@ -5,12 +5,13 @@ from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Annotated
+from datetime import datetime, timezone
 
 from database import (
     get_all_products, delete_product, get_price_history,
     get_settings, update_settings, upsert_product, set_watch, set_target, clear_discovered,
-    get_status, watch_product, get_active_coupons, get_sales_summary, get_sales_series, get_recent_orders,
-    get_usd_brl_rate, set_order_excluded,
+    get_status, watch_product, get_sales_summary, get_sales_series, get_recent_orders,
+    get_usd_brl_rate, set_order_excluded, list_coupons, add_manual_coupon, delete_coupon,
 )
 from aliexpress import extract_product_id, get_product_detail
 from monitor import run_check
@@ -137,9 +138,39 @@ def remove_product(product_id: str, key: str = Security(require_auth)):
 
 
 @app.get("/api/coupons")
-def list_coupons(key: str = Security(require_auth)):
-    """Cupons de campanha descobertos automaticamente nos anúncios (últimas 72h)."""
-    return get_active_coupons()
+def get_coupons(key: str = Security(require_auth)):
+    """Cupons manuais (com validade) + os descobertos automaticamente nos anúncios."""
+    return list_coupons()
+
+
+class CouponRequest(BaseModel):
+    code: str = Field(min_length=2, max_length=64)
+    min_spend: Annotated[float, Field(ge=0)]
+    discount: Annotated[float, Field(gt=0)]
+    expires_at: str | None = None   # "YYYY-MM-DD"; vazio = sem validade
+
+
+@app.post("/api/coupons", status_code=201)
+def create_coupon(body: CouponRequest, key: str = Security(require_auth)):
+    if body.min_spend and body.discount >= body.min_spend:
+        raise HTTPException(400, "O desconto precisa ser menor que o gasto mínimo")
+    expires = None
+    if body.expires_at:
+        try:
+            # vale o dia inteiro da data informada
+            d = datetime.strptime(body.expires_at, "%Y-%m-%d")
+            expires = d.replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(400, "Data inválida (use AAAA-MM-DD)")
+    add_manual_coupon(body.code.strip().upper(), body.min_spend, body.discount, expires)
+    return {"message": "Cupom adicionado"}
+
+
+@app.delete("/api/coupons/{code}")
+def remove_coupon(code: str, key: str = Security(require_auth)):
+    if not delete_coupon(code):
+        raise HTTPException(404, "Cupom não encontrado")
+    return {"message": "Cupom removido"}
 
 
 # ---------- Vendas ----------
@@ -209,7 +240,6 @@ class SettingsRequest(BaseModel):
     filters_enabled:        bool | None = None
     import_tax_rate:        Annotated[float, Field(ge=0, le=1)] | None = None
     icms_rate:              Annotated[float, Field(ge=0, lt=1)] | None = None
-    coupon_campaigns:       list[str] | None = None
 
 
 @app.put("/api/settings")

@@ -229,16 +229,14 @@ def test_campaign_coupons():
     assert c == {"code": "AFS90", "min_spend": 550.0, "discount": 90.0}
     print("  ✅ Data de validade na linha não confunde o cálculo (ano != gasto mínimo)")
 
-    settings = {
-        "import_tax_rate": 0.0,
-        "icms_rate": 0.17,
-        "coupon_campaigns": [{"code": "BRT28", "min_spend": 141.0, "discount": 28.0}],
-    }
+    settings = {"import_tax_rate": 0.0, "icms_rate": 0.17}
 
-    # isola dos cupons descobertos que o bot de produção guarda no banco
+    # a fonte de campanhas é a tabela coupons; isola dos cupons reais do banco
     import monitor as monitor_mod
     orig_active = monitor_mod.get_active_coupons
-    monitor_mod.get_active_coupons = lambda: []
+    monitor_mod.get_active_coupons = lambda: [
+        {"code": "BRT28", "min_spend": 141.0, "discount": 28.0}
+    ]
     try:
         # produto sem cupom próprio → campanha aplica
         # (números do checkout real: app R$ 251,99 − R$ 28 cupom, ICMS 17% por dentro)
@@ -263,8 +261,10 @@ def test_campaign_coupons():
         print("  ✅ Cupom do anúncio (R$ 40) vence a campanha (R$ 28)")
 
         # campanha com desconto >= preço não pode ser aplicada (preço negativo)
-        big = {"import_tax_rate": 0.0, "icms_rate": 0.17,
-               "coupon_campaigns": [{"code": "BIG", "min_spend": 0.0, "discount": 50.0}]}
+        big = {"import_tax_rate": 0.0, "icms_rate": 0.17}
+        monitor_mod.get_active_coupons = lambda: [
+            {"code": "BIG", "min_spend": 0.0, "discount": 50.0}
+        ]
         p4 = {"price": 30.0, "coupon": None}
         _apply_best_coupon(p4, big)
         assert p4["coupon"] is None, "cupom de R$50 não pode aplicar em produto de R$30"
@@ -428,6 +428,40 @@ def test_sales_sync():
     print("  ✅ Sales sync OK")
 
 
+def test_manual_coupons_and_expiry():
+    print("\n--- Teste: cupons manuais, validade e expiracao ---")
+    from datetime import datetime, timedelta, timezone
+    from database import (init_db, add_manual_coupon, delete_coupon,
+                          get_active_coupons, list_coupons)
+
+    init_db()
+    agora = datetime.now(timezone.utc)
+
+    # sem validade → sempre ativo
+    add_manual_coupon("TESTMAN1", 100.0, 10.0, None)
+    ativos = {c["code"] for c in get_active_coupons()}
+    assert "TESTMAN1" in ativos
+    print("  ✅ Cupom manual sem validade: ativo")
+
+    # validade futura → ativo
+    add_manual_coupon("TESTMAN2", 100.0, 10.0, agora + timedelta(days=2))
+    assert "TESTMAN2" in {c["code"] for c in get_active_coupons()}
+    print("  ✅ Validade futura: ativo")
+
+    # validade passada → sai sozinho de get_active_coupons (não é mais aplicado)
+    add_manual_coupon("TESTMAN3", 100.0, 10.0, agora - timedelta(days=1))
+    assert "TESTMAN3" not in {c["code"] for c in get_active_coupons()}, "vencido não pode ser aplicado"
+    # mas continua visível no painel, marcado como inativo, para o usuário remover
+    painel = {c["code"]: c for c in list_coupons()}
+    assert "TESTMAN3" in painel and painel["TESTMAN3"]["active"] is False
+    print("  ✅ Vencido: sai da aplicação automaticamente, fica visível no painel")
+
+    for code in ("TESTMAN1", "TESTMAN2", "TESTMAN3"):
+        assert delete_coupon(code) is True
+    assert delete_coupon("NAOEXISTE") is False
+    print("  ✅ Remoção OK")
+
+
 def test_coupon_harvest():
     print("\n--- Teste: colheita automática de cupons (via banco) ---")
     from database import init_db, get_active_coupons, get_connection
@@ -443,6 +477,13 @@ def test_coupon_harvest():
     assert "TESTCUP99" in active
     assert active["TESTCUP99"]["discount"] == 28.0
     print("  ✅ Cupom visto num anúncio foi salvo e está ativo")
+
+    # cupom "gaste X, ganhe X" (desconto >= gasto mínimo) é artefato de parse
+    bogus = {"coupon": {"code": "TESTBOGUS", "discount": 16.9, "min_spend": 16.9,
+                        "fixed": True, "applicable": True, "final_price": 0.0}}
+    _harvest_coupon(bogus)
+    assert "TESTBOGUS" not in {c["code"] for c in get_active_coupons()},         "cupom que zera o produto não pode ser propagado"
+    print("  ✅ Cupom 'gaste X ganhe X' não é colhido")
 
     # cupom percentual NÃO é colhido (desconto depende do preço do anúncio)
     pct = {"coupon": {"code": "TESTPCT99", "discount": 10.0, "min_spend": 50.0,
@@ -593,6 +634,7 @@ if __name__ == "__main__":
     test_checkout_total()
     test_checkout_price_target()
     test_campaign_coupons()
+    test_manual_coupons_and_expiry()
     test_daily_post_cap()
     test_order_parser()
     test_sales_sync()

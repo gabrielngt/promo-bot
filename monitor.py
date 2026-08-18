@@ -17,7 +17,9 @@ def _harvest_coupon(product: dict):
     """Guarda cupons de campanha vistos em anúncios: o código é global, então um
     cupom descoberto num produto pode ser aplicado nos outros posts do ciclo."""
     c = product.get("coupon")
-    if c and c.get("fixed") and c["discount"] > 0 and c["min_spend"] > 0:
+    # discount >= min_spend seria "gaste X, ganhe X" (produto grátis): não existe,
+    # é artefato de parse do texto do cupom — não propaga para outros produtos
+    if c and c.get("fixed") and 0 < c["discount"] < c["min_spend"]:
         save_coupon(c["code"], c["min_spend"], c["discount"])
 
 
@@ -27,7 +29,7 @@ def _apply_best_coupon(product: dict, settings: dict):
     Os de campanha são estimativa: a API não expõe elegibilidade por produto."""
     own = product.get("coupon")
     best = own if (own and own.get("applicable")) else None
-    campaigns = list(settings.get("coupon_campaigns", [])) + get_active_coupons()
+    campaigns = get_active_coupons()
     for camp in campaigns:
         # desconto >= preço = cupom de outra faixa; aplicar daria preço negativo
         if camp["discount"] >= product["price"]:

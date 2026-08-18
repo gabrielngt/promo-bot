@@ -123,6 +123,9 @@ _SCHEMA_MIGRATIONS = [
     # vendas: payload cru (p/ investigar campos não documentados) e exclusão manual
     "ALTER TABLE affiliate_orders ADD COLUMN IF NOT EXISTS raw_json TEXT",
     "ALTER TABLE affiliate_orders ADD COLUMN IF NOT EXISTS excluded BOOLEAN DEFAULT FALSE",
+    # cupons: origem (auto/manual) e validade explícita
+    "ALTER TABLE coupons ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'auto'",
+    "ALTER TABLE coupons ADD COLUMN IF NOT EXISTS expires_at timestamptz",
 ]
 
 
@@ -161,7 +164,9 @@ def init_db(keyword_defaults: list[str] | None = None):
                 code        TEXT PRIMARY KEY,
                 min_spend   double precision NOT NULL,
                 discount    double precision NOT NULL,
-                last_seen   timestamptz NOT NULL
+                last_seen   timestamptz NOT NULL,
+                source      TEXT DEFAULT 'auto',
+                expires_at  timestamptz
             )
         """)
         conn.execute("""
@@ -195,6 +200,29 @@ def init_db(keyword_defaults: list[str] | None = None):
                 "INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
                 (k, v)
             )
+        _migrate_campaign_setting(conn)
+
+
+def _migrate_campaign_setting(conn):
+    """Cupons manuais moraram num campo de texto em settings; agora são linhas na
+    tabela coupons (com validade). Move o que houver e esvazia o campo."""
+    row = conn.execute("SELECT value FROM settings WHERE key='coupon_campaigns'").fetchone()
+    if not row or not (row["value"] or "").strip():
+        return
+    moved = 0
+    for line in row["value"].splitlines():
+        c = _parse_campaign_entry(line)
+        if not c:
+            continue
+        conn.execute(
+            "INSERT INTO coupons (code, min_spend, discount, last_seen, source) "
+            "VALUES (%s, %s, %s, %s, 'manual') ON CONFLICT (code) DO NOTHING",
+            (c["code"], c["min_spend"], c["discount"], _utcnow()),
+        )
+        moved += 1
+    conn.execute("UPDATE settings SET value='' WHERE key='coupon_campaigns'")
+    if moved:
+        print(f"[DB] {moved} cupom(ns) migrado(s) do campo de texto para a tabela.")
 
 
 # ---------- Settings ----------
@@ -287,13 +315,6 @@ def get_settings() -> dict:
         "filters_enabled": _as_bool(s.get("filters_enabled", "1")),
         "import_tax_rate": float(s.get("import_tax_rate", 0.0)),
         "icms_rate": float(s.get("icms_rate", 0.17)),
-        "coupon_campaigns": [
-            c for c in (
-                _parse_campaign_entry(line)
-                for line in s.get("coupon_campaigns", "").splitlines()
-                if line.strip()
-            ) if c is not None
-        ],
     }
 
 
@@ -474,23 +495,67 @@ def set_reactions_offset(offset: int):
 # todo cupom visto num anúncio é guardado e reaplicado nos demais posts.
 
 def save_coupon(code: str, min_spend: float, discount: float):
+    """Cupom colhido automaticamente de um anúncio. Não mexe em cupom manual
+    (o usuário definiu valores e validade à mão)."""
     with get_connection() as conn:
         conn.execute(
-            "INSERT INTO coupons (code, min_spend, discount, last_seen) VALUES (%s, %s, %s, %s) "
+            "INSERT INTO coupons (code, min_spend, discount, last_seen, source) "
+            "VALUES (%s, %s, %s, %s, 'auto') "
             "ON CONFLICT (code) DO UPDATE SET min_spend=EXCLUDED.min_spend, "
-            "discount=EXCLUDED.discount, last_seen=EXCLUDED.last_seen",
+            "discount=EXCLUDED.discount, last_seen=EXCLUDED.last_seen "
+            "WHERE coupons.source IS DISTINCT FROM 'manual'",
             (code, min_spend, discount, _utcnow()),
         )
 
 
+def add_manual_coupon(code: str, min_spend: float, discount: float, expires_at=None):
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO coupons (code, min_spend, discount, last_seen, source, expires_at) "
+            "VALUES (%s, %s, %s, %s, 'manual', %s) "
+            "ON CONFLICT (code) DO UPDATE SET min_spend=EXCLUDED.min_spend, "
+            "discount=EXCLUDED.discount, source='manual', expires_at=EXCLUDED.expires_at, "
+            "last_seen=EXCLUDED.last_seen",
+            (code, min_spend, discount, _utcnow(), expires_at),
+        )
+
+
+def delete_coupon(code: str) -> bool:
+    with get_connection() as conn:
+        cur = conn.execute("DELETE FROM coupons WHERE code = %s", (code,))
+    return cur.rowcount > 0
+
+
+# Um cupom vale enquanto: (manual) a validade não passou — sem validade = sempre;
+# (auto) foi visto nas últimas N horas, já que campanhas somem sem aviso.
+_ACTIVE_SQL = """
+    (source = 'manual' AND (expires_at IS NULL OR expires_at > %(now)s))
+    OR (source IS DISTINCT FROM 'manual' AND last_seen >= %(cutoff)s)
+"""
+
+
 def get_active_coupons(max_age_hours: int = 72) -> list[dict]:
-    """Cupons vistos nas últimas N horas (campanhas expiram; 72h é folga segura)."""
-    cutoff = _utcnow() - timedelta(hours=max_age_hours)
+    """Cupons válidos agora — os manuais dentro da validade, os automáticos
+    vistos nas últimas N horas."""
+    params = {"now": _utcnow(), "cutoff": _utcnow() - timedelta(hours=max_age_hours)}
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT code, min_spend, discount, last_seen FROM coupons "
-            "WHERE last_seen >= %s ORDER BY discount DESC",
-            (cutoff,),
+            "SELECT code, min_spend, discount, last_seen, source, expires_at FROM coupons "
+            f"WHERE {_ACTIVE_SQL} ORDER BY discount DESC", params,
+        ).fetchall()
+    return list(rows)
+
+
+def list_coupons(max_age_hours: int = 72) -> list[dict]:
+    """Para o painel: manuais (mesmo vencidos, p/ o usuário ver e remover) e os
+    automáticos ainda válidos. Cada linha traz se está ativa."""
+    params = {"now": _utcnow(), "cutoff": _utcnow() - timedelta(hours=max_age_hours)}
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT code, min_spend, discount, last_seen, source, expires_at, "
+            f"({_ACTIVE_SQL}) AS active FROM coupons "
+            "WHERE source = 'manual' OR last_seen >= %(cutoff)s "
+            "ORDER BY source DESC, discount DESC", params,
         ).fetchall()
     return list(rows)
 
