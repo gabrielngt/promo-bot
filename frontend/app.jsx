@@ -89,6 +89,7 @@ function makeApi(baseUrl, apiKey) {
     getStatus:     ()           => req("GET",    "/api/status"),
     getCoupons:    ()           => req("GET",    "/api/coupons"),
     getSales:      (days)       => req("GET",    `/api/sales?days=${days}`),
+    excludeOrder:  (oid, sid, excluded) => req("PUT", `/api/sales/${oid}/${sid}/excluded`, { excluded }),
     runNow:        ()           => req("POST",   "/api/run"),
   };
 }
@@ -106,6 +107,7 @@ const fromApi = (s) => ({
   coldStart:  Math.round((s.cold_start_threshold ?? 0.30) * 100),
   interval:   s.check_interval_minutes ?? 60,
   maxPosts:   s.max_posts_per_cycle    ?? 5,
+  maxDaily:   s.max_posts_per_day      ?? 20,
   minDays:    s.min_repost_days        ?? 7,
   importTax:  Math.round((s.import_tax_rate ?? 0)    * 100),
   icms:       Math.round((s.icms_rate       ?? 0.17) * 100),
@@ -125,6 +127,7 @@ const toApi = (s) => ({
   cold_start_threshold:   s.coldStart / 100,
   check_interval_minutes: Number(s.interval),
   max_posts_per_cycle:    Number(s.maxPosts),
+  max_posts_per_day:      Number(s.maxDaily),
   min_repost_days:        Number(s.minDays),
   import_tax_rate:        s.importTax / 100,
   icms_rate:              s.icms / 100,
@@ -772,6 +775,10 @@ function Configuracoes({ api, showToast }) {
             hint="Limite de produtos postados a cada verificação."
             value={draft.maxPosts} suffix="posts" onChange={(v) => set({ maxPosts: v })} min={1} />
           <NumberSetting
+            label="Máximo de posts por dia"
+            hint="Teto de segurança nas últimas 24h. Atingido o limite, o bot para de postar até o dia virar — protege o canal de flood se muitos produtos parecerem em promoção ao mesmo tempo."
+            value={draft.maxDaily} suffix="posts" onChange={(v) => set({ maxDaily: v })} min={1} />
+          <NumberSetting
             label="Intervalo de verificação (minutos)"
             hint="Com que frequência o bot consulta os preços na AliExpress."
             value={draft.interval} suffix="min" onChange={(v) => set({ interval: v })} />
@@ -1061,6 +1068,16 @@ function Vendas({ api, showToast }) {
   const summary = data?.summary;
   const orders = data?.orders ?? [];
 
+  const toggleExcluded = async (o) => {
+    try {
+      await api.excludeOrder(o.order_id, o.sub_order_id, !o.excluded);
+      showToast(o.excluded ? "Pedido reincluído nos totais." : "Pedido marcado como compra própria.");
+      load();
+    } catch (err) {
+      showToast("Erro: " + err.message, "err");
+    }
+  };
+
   return (
     <div className="page">
       <div className="page-head">
@@ -1099,7 +1116,14 @@ function Vendas({ api, showToast }) {
         )}
       </div>
 
-      <div className="section-head"><div className="section-title">Pedidos recentes</div></div>
+      <div className="section-head">
+        <div className="section-title">Pedidos recentes</div>
+        <div className="field-hint" style={{ marginTop: 4 }}>
+          A AliExpress liquida em dólar; os valores acima já estão convertidos
+          {summary?.usd_brl_rate ? ` (US$ 1 = R$ ${Number(summary.usd_brl_rate).toFixed(2)})` : ""}.
+          Compras próprias não geram comissão e a API não as identifica — use o ✕ para tirá-las dos totais.
+        </div>
+      </div>
       {orders.length === 0 && !loading ? (
         <div className="card">
           <div className="empty">
@@ -1118,11 +1142,13 @@ function Vendas({ api, showToast }) {
                 <th>Data</th>
                 <th className="num-col">Valor</th>
                 <th className="num-col">Comissão</th>
+                <th className="actions-col"></th>
               </tr>
             </thead>
             <tbody>
               {orders.map((o) => (
-                <tr key={o.order_id + "-" + o.sub_order_id}>
+                <tr key={o.order_id + "-" + o.sub_order_id}
+                    style={o.excluded ? { opacity: 0.45 } : undefined}>
                   <td>
                     {o.product_id ? (
                       <a className="prod-name" href={`https://www.aliexpress.com/item/${o.product_id}.html`} target="_blank" rel="noopener noreferrer">
@@ -1134,6 +1160,13 @@ function Vendas({ api, showToast }) {
                   <td className="muted-cell">{o.order_date ? new Date(o.order_date + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
                   <td className="num-col price">{fmtMoney(o.paid_amount, o.currency)}</td>
                   <td className="num-col price">{fmtMoney(o.estimated_commission, o.currency)}</td>
+                  <td className="actions-col">
+                    <button className={o.excluded ? "btn btn-ghost" : "btn btn-ghost-danger"}
+                      title={o.excluded ? "Reincluir nos totais" : "Marcar como compra própria (não gera comissão)"}
+                      onClick={() => toggleExcluded(o)}>
+                      {o.excluded ? <Icon.plus /> : <Icon.x />}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

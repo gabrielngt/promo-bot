@@ -11,6 +11,10 @@ _DEFAULTS = {
     "check_interval_minutes": "10",
     "min_repost_days": "1",
     "max_posts_per_cycle": "5",
+    # teto diário: o limite por ciclo não segura nada sozinho (com intervalo de
+    # 10 min são ~144 ciclos/dia). Protege o canal de flood quando algo faz
+    # muitos produtos parecerem em promoção ao mesmo tempo.
+    "max_posts_per_day": "20",
     "peripheral_keywords": "",  # populated from config on first init
     "brand_whitelist": "",  # vazio = sem filtro de marca
     "keyword_blacklist": "",  # produtos cujo título contiver qualquer palavra são ignorados
@@ -116,6 +120,9 @@ _SCHEMA_MIGRATIONS = [
     "ALTER TABLE products ADD COLUMN IF NOT EXISTS telegram_message_id BIGINT",
     "ALTER TABLE products ADD COLUMN IF NOT EXISTS reactions_positive INT DEFAULT 0",
     "ALTER TABLE products ADD COLUMN IF NOT EXISTS reactions_negative INT DEFAULT 0",
+    # vendas: payload cru (p/ investigar campos não documentados) e exclusão manual
+    "ALTER TABLE affiliate_orders ADD COLUMN IF NOT EXISTS raw_json TEXT",
+    "ALTER TABLE affiliate_orders ADD COLUMN IF NOT EXISTS excluded BOOLEAN DEFAULT FALSE",
 ]
 
 
@@ -172,6 +179,8 @@ def init_db(keyword_defaults: list[str] | None = None):
                 created_time_raw      TEXT,
                 paid_time_raw         TEXT,
                 is_new_buyer          BOOLEAN,
+                raw_json              TEXT,
+                excluded              BOOLEAN DEFAULT FALSE,
                 synced_at             timestamptz NOT NULL,
                 PRIMARY KEY (order_id, sub_order_id)
             )
@@ -262,6 +271,7 @@ def get_settings() -> dict:
         "check_interval_minutes": int(s.get("check_interval_minutes", 60)),
         "min_repost_days": int(s.get("min_repost_days", 3)),
         "max_posts_per_cycle": int(s.get("max_posts_per_cycle", 5)),
+        "max_posts_per_day": int(s.get("max_posts_per_day", 20)),
         "peripheral_keywords": [
             kw.strip() for kw in s.get("peripheral_keywords", "").splitlines() if kw.strip()
         ],
@@ -355,6 +365,15 @@ def mark_posted(product_id: str, price: float = 0.0, message_id: int | None = No
             "UPDATE products SET posted_at=%s, last_posted_price=%s, telegram_message_id=%s WHERE product_id=%s",
             (now, price, message_id, product_id),
         )
+
+
+def count_posts_since(hours: int = 24) -> int:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM products WHERE posted_at >= %s",
+            (_utcnow() - timedelta(hours=hours),),
+        ).fetchone()
+    return row["n"] if row else 0
 
 
 def get_all_products() -> list[dict]:
@@ -486,18 +505,20 @@ def upsert_affiliate_order(o: dict):
         conn.execute(
             "INSERT INTO affiliate_orders (order_id, sub_order_id, product_id, product_title, "
             "order_status, paid_amount, commission_rate, estimated_commission, currency, "
-            "order_date, created_time_raw, paid_time_raw, is_new_buyer, synced_at) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "order_date, created_time_raw, paid_time_raw, is_new_buyer, raw_json, synced_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
             "ON CONFLICT (order_id, sub_order_id) DO UPDATE SET "
             "order_status=EXCLUDED.order_status, paid_amount=EXCLUDED.paid_amount, "
             "commission_rate=EXCLUDED.commission_rate, estimated_commission=EXCLUDED.estimated_commission, "
             "currency=EXCLUDED.currency, order_date=EXCLUDED.order_date, "
             "created_time_raw=EXCLUDED.created_time_raw, paid_time_raw=EXCLUDED.paid_time_raw, "
-            "is_new_buyer=EXCLUDED.is_new_buyer, synced_at=EXCLUDED.synced_at",
+            "is_new_buyer=EXCLUDED.is_new_buyer, raw_json=EXCLUDED.raw_json, "
+            "synced_at=EXCLUDED.synced_at",
             (o["order_id"], o["sub_order_id"], o.get("product_id"), o.get("product_title"),
              o.get("order_status"), o.get("paid_amount"), o.get("commission_rate"),
              o.get("estimated_commission"), o.get("currency"), o.get("order_date"),
-             o.get("created_time_raw"), o.get("paid_time_raw"), o.get("is_new_buyer"), _utcnow()),
+             o.get("created_time_raw"), o.get("paid_time_raw"), o.get("is_new_buyer"),
+             o.get("raw_json"), _utcnow()),
         )
 
 
@@ -506,7 +527,7 @@ def get_dominant_currency(days: int = 30) -> str | None:
     cutoff = (_utcnow() - timedelta(days=days)).date()
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT currency FROM affiliate_orders WHERE order_date >= %s "
+            "SELECT currency FROM affiliate_orders WHERE order_date >= %s AND excluded IS NOT TRUE "
             "GROUP BY currency ORDER BY SUM(paid_amount) DESC NULLS LAST LIMIT 1",
             (cutoff,),
         ).fetchone()
@@ -520,7 +541,8 @@ def get_sales_summary(days: int = 30) -> dict:
         row = conn.execute(
             "SELECT COUNT(*) AS count, COALESCE(SUM(paid_amount),0) AS paid_total, "
             "COALESCE(SUM(estimated_commission),0) AS commission_total "
-            "FROM affiliate_orders WHERE order_date >= %s AND currency IS NOT DISTINCT FROM %s",
+            "FROM affiliate_orders WHERE order_date >= %s AND currency IS NOT DISTINCT FROM %s "
+            "AND excluded IS NOT TRUE",
             (cutoff, currency),
         ).fetchone()
     return {
@@ -541,7 +563,7 @@ def get_sales_series(days: int = 30) -> list[dict]:
         rows = conn.execute(
             "SELECT order_date, COUNT(*) AS count, COALESCE(SUM(paid_amount),0) AS paid_total "
             "FROM affiliate_orders WHERE order_date >= %s AND currency IS NOT DISTINCT FROM %s "
-            "GROUP BY order_date ORDER BY order_date",
+            "AND excluded IS NOT TRUE GROUP BY order_date ORDER BY order_date",
             (cutoff, currency),
         ).fetchall()
     return list(rows)
@@ -551,11 +573,47 @@ def get_recent_orders(limit: int = 50) -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT order_id, sub_order_id, product_id, product_title, order_status, "
-            "paid_amount, estimated_commission, currency, order_date "
+            "paid_amount, estimated_commission, currency, order_date, excluded "
             "FROM affiliate_orders ORDER BY order_date DESC NULLS LAST, synced_at DESC LIMIT %s",
             (limit,),
         ).fetchall()
     return list(rows)
+
+
+# Cotação usada para exibir em BRL os valores que a AliExpress liquida em USD.
+# Atualizada a cada sync (sales.py); o valor guardado é o fallback quando a
+# consulta de câmbio falha.
+_USD_BRL_FALLBACK = 5.40
+
+
+def get_usd_brl_rate() -> float:
+    with get_connection() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key='usd_brl_rate'").fetchone()
+    try:
+        rate = float(row["value"]) if row and row["value"] else 0.0
+    except (TypeError, ValueError):
+        rate = 0.0
+    return rate if rate > 0 else _USD_BRL_FALLBACK
+
+
+def set_usd_brl_rate(rate: float):
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('usd_brl_rate', %s) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            (str(rate),),
+        )
+
+
+def set_order_excluded(order_id: str, sub_order_id: str, excluded: bool) -> bool:
+    """Marca um pedido como não-comissionável (ex.: compra própria — a AliExpress
+    não paga comissão nesses, mas a API os devolve junto com as vendas reais)."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE affiliate_orders SET excluded = %s WHERE order_id = %s AND sub_order_id = %s",
+            (excluded, order_id, sub_order_id),
+        )
+    return cur.rowcount > 0
 
 
 def record_check_run():

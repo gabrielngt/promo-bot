@@ -10,6 +10,7 @@ from database import (
     get_all_products, delete_product, get_price_history,
     get_settings, update_settings, upsert_product, set_watch, set_target, clear_discovered,
     get_status, watch_product, get_active_coupons, get_sales_summary, get_sales_series, get_recent_orders,
+    get_usd_brl_rate, set_order_excluded,
 )
 from aliexpress import extract_product_id, get_product_detail
 from monitor import run_check
@@ -143,13 +144,48 @@ def list_coupons(key: str = Security(require_auth)):
 
 # ---------- Vendas ----------
 
+def _to_brl(value: float | None, currency: str | None, rate: float) -> float:
+    """A AliExpress liquida a comissão em USD; o painel mostra sempre em BRL."""
+    v = value or 0.0
+    return round(v * rate, 2) if (currency or "").upper() == "USD" else round(v, 2)
+
+
 @app.get("/api/sales")
 def sales(days: int = 30, key: str = Security(require_auth)):
-    return {
-        "summary": get_sales_summary(days),
-        "series": get_sales_series(days),
-        "orders": get_recent_orders(50),
-    }
+    rate = get_usd_brl_rate()
+    summary = get_sales_summary(days)
+    series = get_sales_series(days)
+    orders = get_recent_orders(50)
+
+    src = summary.get("currency")
+    summary["source_currency"] = src
+    summary["paid_total"] = _to_brl(summary["paid_total"], src, rate)
+    summary["commission_total"] = _to_brl(summary["commission_total"], src, rate)
+    summary["currency"] = "BRL"
+    summary["usd_brl_rate"] = rate
+
+    for d in series:
+        d["paid_total"] = _to_brl(d["paid_total"], src, rate)
+    for o in orders:
+        o["paid_amount"] = _to_brl(o["paid_amount"], o.get("currency"), rate)
+        o["estimated_commission"] = _to_brl(o["estimated_commission"], o.get("currency"), rate)
+        o["source_currency"] = o.get("currency")
+        o["currency"] = "BRL"
+
+    return {"summary": summary, "series": series, "orders": orders}
+
+
+class ExcludeRequest(BaseModel):
+    excluded: bool = True
+
+
+@app.put("/api/sales/{order_id}/{sub_order_id}/excluded")
+def exclude_order(order_id: str, sub_order_id: str, body: ExcludeRequest,
+                  key: str = Security(require_auth)):
+    """Marca/desmarca um pedido como não-comissionável (ex.: compra própria)."""
+    if not set_order_excluded(order_id, sub_order_id, body.excluded):
+        raise HTTPException(404, "Pedido não encontrado")
+    return {"message": "Pedido atualizado", "excluded": body.excluded}
 
 
 # ---------- Settings ----------
@@ -165,6 +201,7 @@ class SettingsRequest(BaseModel):
     check_interval_minutes: Annotated[int,   Field(ge=1)]       | None = None
     min_repost_days:        Annotated[int,   Field(ge=0)]       | None = None
     max_posts_per_cycle:    Annotated[int,   Field(ge=1)]       | None = None
+    max_posts_per_day:      Annotated[int,   Field(ge=1)]       | None = None
     peripheral_keywords:    list[str] | None = None
     brand_whitelist:        list[str] | None = None
     keyword_blacklist:      list[str] | None = None

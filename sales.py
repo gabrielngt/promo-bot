@@ -8,8 +8,10 @@ vistos conforme eles avançam de "pago" para "confirmado".
 """
 from datetime import datetime, timedelta, timezone
 
+import requests
+
 from aliexpress import get_affiliate_orders
-from database import upsert_affiliate_order
+from database import upsert_affiliate_order, set_usd_brl_rate, get_usd_brl_rate
 
 # Documentados pela API; o parâmetro "status" é obrigatório e não aceita lista
 # nem vazio, então consultamos um de cada vez.
@@ -18,8 +20,27 @@ ORDER_STATUSES = ["Payment Completed", "Buyer Confirmed Receipt"]
 SYNC_WINDOW_DAYS = 60
 MAX_PAGES_PER_STATUS = 20  # trava de segurança contra paginação mal-formada
 
+# A comissão é liquidada em USD; o painel exibe em BRL, então a cotação é
+# atualizada junto com os pedidos. Falha aqui não interrompe o sync — fica o
+# último valor conhecido.
+FX_URL = "https://economia.awesomeapi.com.br/last/USD-BRL"
+
+
+def refresh_usd_brl_rate() -> float:
+    try:
+        resp = requests.get(FX_URL, timeout=10)
+        resp.raise_for_status()
+        rate = float(resp.json()["USDBRL"]["bid"])
+        if rate > 0:
+            set_usd_brl_rate(rate)
+            return rate
+    except Exception as e:
+        print(f"[Sales] Não foi possível atualizar a cotação USD/BRL: {e}")
+    return get_usd_brl_rate()
+
 
 def sync_orders() -> int:
+    refresh_usd_brl_rate()
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=SYNC_WINDOW_DAYS)
     start_s = start.strftime("%Y-%m-%d %H:%M:%S")

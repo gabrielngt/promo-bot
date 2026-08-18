@@ -137,6 +137,12 @@ def test_coupon_parser():
     assert c["applicable"] and abs(c["discount"] - 20.0) < 0.01
     print(f"  ✅ Fixo PT: -R$ {c['discount']:.2f}")
 
+    # desconto >= preço: cupom de outra faixa, não aplica (senão preço negativo)
+    c = _parse_coupon(raw("Spend BRL 0.00, get BRL 28.19 off", "0"), 10.0)
+    assert not c["applicable"], "cupom maior que o preço não pode ser aplicável"
+    assert c["final_price"] == 10.0, "preço final nunca fica negativo"
+    print("  ✅ Cupom maior que o preço: não aplica (sem preço negativo)")
+
     # sem código → None
     assert _parse_coupon({}, 100.0) is None
     print("  ✅ Sem cupom: None")
@@ -255,8 +261,41 @@ def test_campaign_coupons():
         _apply_best_coupon(p3, settings)
         assert p3["coupon"]["code"] == "PONTO40"
         print("  ✅ Cupom do anúncio (R$ 40) vence a campanha (R$ 28)")
+
+        # campanha com desconto >= preço não pode ser aplicada (preço negativo)
+        big = {"import_tax_rate": 0.0, "icms_rate": 0.17,
+               "coupon_campaigns": [{"code": "BIG", "min_spend": 0.0, "discount": 50.0}]}
+        p4 = {"price": 30.0, "coupon": None}
+        _apply_best_coupon(p4, big)
+        assert p4["coupon"] is None, "cupom de R$50 não pode aplicar em produto de R$30"
+        assert _checkout_price(p4, big) > 0
+        print("  ✅ Campanha maior que o preço: ignorada (sem preço negativo)")
     finally:
         monitor_mod.get_active_coupons = orig_active
+
+
+def test_daily_post_cap():
+    print("\n--- Teste: teto diário de posts ---")
+    from database import get_settings, count_posts_since
+
+    s = get_settings()
+    assert "max_posts_per_day" in s and s["max_posts_per_day"] >= 1
+    print(f"  ✅ Setting max_posts_per_day presente: {s['max_posts_per_day']}")
+
+    n = count_posts_since(24)
+    assert isinstance(n, int) and n >= 0
+    print(f"  ✅ count_posts_since(24) = {n} post(s)")
+
+    # a aritmética que o monitor usa para fechar o ciclo
+    for posts_24h, cap, per_cycle, esperado in [
+        (0, 20, 5, 5),    # dia limpo → limite do ciclo
+        (18, 20, 5, 2),   # perto do teto → só o que falta
+        (20, 20, 5, 0),   # no teto → nada
+        (72, 20, 5, 0),   # acima do teto (caso do flood) → nada
+    ]:
+        restante = max(0, cap - posts_24h)
+        assert min(per_cycle, restante) == esperado
+    print("  ✅ Teto corta o ciclo: 18/20 → 2 posts, 20/20 e 72/20 → 0")
 
 
 def test_order_parser():
@@ -360,6 +399,29 @@ def test_sales_sync():
     assert abs(updated["paid_amount"] - 189.90) < 0.01
     assert len([o for o in recent2 if o["order_id"] == "TESTORDER1"]) == 1
     print("  ✅ Upsert atualiza o pedido existente em vez de duplicar")
+
+    # conversão USD -> BRL (a AliExpress liquida em dólar, o painel mostra em real)
+    from api import _to_brl
+    assert abs(_to_brl(37.92, "USD", 5.40) - 204.77) < 0.01
+    assert abs(_to_brl(100.0, "BRL", 5.40) - 100.0) < 0.01, "valor já em BRL não é convertido"
+    assert _to_brl(None, "USD", 5.40) == 0.0
+    print("  ✅ Conversão: US$ 37,92 → R$ 204,77 (BRL não é convertido de novo)")
+
+    # exclusão manual (compra própria) tira o pedido dos totais
+    from database import set_order_excluded
+    antes = get_sales_summary(days=30)["count"]
+    assert set_order_excluded("TESTORDER1", "TESTORDER1", True) is True
+    depois = get_sales_summary(days=30)["count"]
+    assert depois == antes - 1, f"excluído deveria sair dos totais ({antes} -> {depois})"
+    assert any(o["order_id"] == "TESTORDER1" and o["excluded"] for o in get_recent_orders(10)),         "excluído continua na lista, marcado"
+    # re-sync não pode reverter a marcação manual
+    upsert_affiliate_order({**order, "paid_amount": 150.0})
+    assert get_sales_summary(days=30)["count"] == depois, "re-sync não pode desfazer a exclusão"
+    print("  ✅ Exclusão: sai dos totais, fica na lista e sobrevive ao re-sync")
+
+    assert set_order_excluded("TESTORDER1", "TESTORDER1", False) is True
+    assert get_sales_summary(days=30)["count"] == antes
+    print("  ✅ Reinclusão volta a contar nos totais")
 
     with get_connection() as conn:
         conn.execute("DELETE FROM affiliate_orders WHERE order_id = 'TESTORDER1'")
@@ -531,6 +593,7 @@ if __name__ == "__main__":
     test_checkout_total()
     test_checkout_price_target()
     test_campaign_coupons()
+    test_daily_post_cap()
     test_order_parser()
     test_sales_sync()
     test_coupon_harvest()

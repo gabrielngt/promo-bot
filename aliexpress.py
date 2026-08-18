@@ -1,4 +1,5 @@
 import hashlib
+import json
 import time
 import requests
 from config import ALIEXPRESS_APP_KEY, ALIEXPRESS_APP_SECRET, ALIEXPRESS_TRACKING_ID
@@ -296,6 +297,10 @@ def _parse_order(raw: dict) -> dict | None:
             "created_time_raw": str(created_time) if created_time else None,
             "paid_time_raw": str(raw.get("paid_time")) if raw.get("paid_time") else None,
             "is_new_buyer": str(raw.get("is_new_buyer", "")).strip().lower() in ("true", "1"),
+            # payload completo: a API manda campos não documentados que podem
+            # distinguir venda real de compra própria — guardar permite investigar
+            # direto no banco, sem precisar de acesso ao servidor
+            "raw_json": json.dumps(raw, ensure_ascii=False, sort_keys=True),
         }
     except Exception as e:
         print(f"[AliExpress] Erro ao parsear pedido {raw.get('order_id')}: {e}")
@@ -493,7 +498,9 @@ def _parse_coupon(raw: dict, price: float) -> dict | None:
             if m:
                 discount = _parse_price(m.group(1))
                 break
-    applicable = discount > 0 and price >= min_spend
+    # desconto >= preço significa cupom de outra faixa (a API não diz a que
+    # produtos ele se aplica); aplicar deixaria o "preço final" negativo
+    applicable = discount > 0 and price >= min_spend and discount < price
     return {
         "code": code,
         "discount": discount,

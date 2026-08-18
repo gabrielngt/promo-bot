@@ -1,6 +1,6 @@
 from config import CATEGORIES, PRODUCTS_PER_CATEGORY
 from aliexpress import get_hot_products, get_products_by_brand, parse_product, get_shipping, get_product_detail, search_products, get_featured_promos, get_featured_promo_products
-from database import upsert_product, can_post, mark_posted, get_settings, get_watchlist, get_recent_min, save_reactions, get_reactions_offset, set_reactions_offset, prune_price_history, record_check_run, save_coupon, get_active_coupons
+from database import upsert_product, can_post, mark_posted, get_settings, get_watchlist, get_recent_min, save_reactions, get_reactions_offset, set_reactions_offset, prune_price_history, record_check_run, save_coupon, get_active_coupons, count_posts_since
 from telegram_bot import post_product, fetch_reaction_updates
 from sales import sync_orders
 
@@ -29,6 +29,9 @@ def _apply_best_coupon(product: dict, settings: dict):
     best = own if (own and own.get("applicable")) else None
     campaigns = list(settings.get("coupon_campaigns", [])) + get_active_coupons()
     for camp in campaigns:
+        # desconto >= preço = cupom de outra faixa; aplicar daria preço negativo
+        if camp["discount"] >= product["price"]:
+            continue
         if product["price"] >= camp["min_spend"] and camp["discount"] > (best["discount"] if best else 0.0):
             best = {
                 "code": camp["code"],
@@ -355,7 +358,16 @@ def _do_check():
         settings = {**settings, "peripheral_keywords": [], "keyword_blacklist": [], "brand_whitelist": []}
 
     brands = settings["brand_whitelist"]
-    max_posts = settings["max_posts_per_cycle"]
+
+    # Teto diário: segura o canal quando algo faz muitos produtos parecerem em
+    # promoção de uma vez (ex.: mudança na fonte do preço deslocando o histórico).
+    posts_24h = count_posts_since(24)
+    daily_left = settings["max_posts_per_day"] - posts_24h
+    if daily_left <= 0:
+        print(f"[Monitor] Teto diário atingido ({posts_24h}/{settings['max_posts_per_day']} posts em 24h) — ciclo ignorado.")
+        return 0
+    max_posts = min(settings["max_posts_per_cycle"], daily_left)
+
     total_posts = 0
     seen_fingerprints: dict = {}  # só fingerprints já POSTADOS neste ciclo
 
