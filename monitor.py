@@ -321,6 +321,9 @@ def check_shopee(settings: dict, max_posts: int, seen_fingerprints: dict) -> int
     """Varre a Shopee pelos termos de busca configurados. A API dela é por
     keyword (não tem navegação por categoria), então cada termo é uma chamada."""
     if not (SHOPEE_APP_ID and SHOPEE_SECRET):
+        # log explícito: sem isto, "credencial faltando" e "nunca foi chamado"
+        # ficam indistinguíveis no log de produção
+        print("[Monitor] Shopee ignorada — SHOPEE_APP_ID/SHOPEE_SECRET ausentes.")
         return 0
 
     posts_made = 0
@@ -409,23 +412,31 @@ def _do_check():
         return 0
     max_posts = min(settings["max_posts_per_cycle"], daily_left)
 
+    # As duas lojas dividem o mesmo canal e o mesmo orçamento. Sem reserva, a
+    # Shopee (que roda depois) nunca é chamada: as marcas da AliExpress esgotam
+    # o ciclo sozinhas. Metade fica reservada para ela; o que ela não usar volta
+    # para as campanhas no fim.
+    shopee_ativa = bool(SHOPEE_APP_ID and SHOPEE_SECRET)
+    shopee_budget = max(1, max_posts // 2) if shopee_ativa else 0
+    ali_budget = max_posts - shopee_budget
+
     total_posts = 0
     seen_fingerprints: dict = {}  # só fingerprints já POSTADOS neste ciclo
 
     # Watchlist tem prioridade — itens escolhidos a dedo pelo usuário.
-    total_posts += check_watchlist(settings, max_posts, seen_fingerprints)
+    total_posts += check_watchlist(settings, ali_budget, seen_fingerprints)
 
     # Marcas têm prioridade (curadas pelo usuário) e orçamento próprio,
     # mas o total do ciclo nunca passa de max_posts.
     if brands:
         print(f"[Monitor] Buscando {len(brands)} marca(s) na whitelist...")
-        per_brand_max = max(1, max_posts // len(brands))
+        per_brand_max = max(1, ali_budget // len(brands))
         for entry in brands:
-            if total_posts >= max_posts:
+            if total_posts >= ali_budget:
                 break
             brand_name = entry["name"]
             kw_filter = entry["keywords"]  # tipos de produto para esta marca
-            brand_budget = min(per_brand_max, max_posts - total_posts)
+            brand_budget = min(per_brand_max, ali_budget - total_posts)
             brand_settings = {**settings, "max_posts_per_cycle": brand_budget}
             raw_products = get_products_by_brand(brand_name)
             if kw_filter:
@@ -447,14 +458,14 @@ def _do_check():
     # Categorias preenchem o orçamento restante até max_posts.
     print(f"[Monitor] Verificando {len(CATEGORIES)} categorias...")
     for category_id in CATEGORIES:
-        if total_posts >= max_posts:
+        if total_posts >= ali_budget:
             break
         posts = check_category(category_id, settings, posts_so_far=total_posts, seen_fingerprints=seen_fingerprints)
         total_posts += posts
         time.sleep(1)
 
-    # Shopee: loja nacional, entra no mesmo canal e divide o mesmo orçamento de posts.
-    if total_posts < max_posts:
+    # Shopee: usa a reserva dela mais o que a AliExpress deixou na mesa.
+    if shopee_ativa and total_posts < max_posts:
         total_posts += check_shopee(settings, max_posts - total_posts, seen_fingerprints)
 
     # Campanhas oficiais em destaque (Flash Deals, Choice Day...) preenchem o que

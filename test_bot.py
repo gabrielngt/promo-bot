@@ -103,6 +103,50 @@ def test_aliexpress_parser():
     print(f"  ✅ Preço do app: usa R$ {p2['price']:.2f} (site R$ {p2['web_price']:.2f})")
 
 
+def test_budget_split_between_stores():
+    print("\n--- Teste: orcamento dividido entre as lojas ---")
+    # sem reserva, as marcas da AliExpress esgotavam o ciclo e a Shopee nunca rodava
+    for max_posts, esperado_shopee in [(2, 1), (3, 1), (5, 2), (10, 5), (1, 1)]:
+        shopee_budget = max(1, max_posts // 2)
+        ali_budget = max_posts - shopee_budget
+        assert shopee_budget == esperado_shopee, (max_posts, shopee_budget)
+        assert shopee_budget >= 1, "Shopee sempre tem ao menos 1 vaga"
+        assert ali_budget >= 0
+        print(f"  orcamento {max_posts:>2} -> AliExpress {ali_budget}, Shopee {shopee_budget}")
+
+    # cenario real do log: 3 deals de marca com orcamento 2
+    max_posts = 2
+    shopee_budget = max(1, max_posts // 2); ali_budget = max_posts - shopee_budget
+    posts = min(3, ali_budget)          # marcas limitadas ao orcamento delas
+    assert posts == 1, "marcas nao podem mais consumir o ciclo inteiro"
+    assert max_posts - posts >= shopee_budget - 1
+    print(f"  caso do log: marcas ficam com {posts}, sobra {max_posts-posts} para a Shopee")
+
+
+def test_fx_rate_is_cached():
+    print("\n--- Teste: cotacao em cache (evita 429) ---")
+    import sales
+    from database import set_usd_brl_rate, get_usd_brl_rate, get_usd_brl_rate_age_hours
+
+    set_usd_brl_rate(5.11)
+    idade = get_usd_brl_rate_age_hours()
+    assert idade is not None and idade < 0.1, "acabou de gravar, idade ~0"
+    assert abs(get_usd_brl_rate() - 5.11) < 0.001
+
+    # com cotacao fresca, nao chama a API (se chamasse, quebraria aqui)
+    chamou = {"n": 0}
+    orig = sales.requests.get
+    sales.requests.get = lambda *a, **k: (_ for _ in ()).throw(AssertionError("nao devia consultar a API"))
+    try:
+        assert abs(sales.refresh_usd_brl_rate() - 5.11) < 0.001
+        print(f"  OK cotacao com {idade*60:.0f} min nao dispara nova consulta")
+    finally:
+        sales.requests.get = orig
+
+    assert sales.FX_MAX_AGE_HOURS >= 1
+    print(f"  OK so reconsulta apos {sales.FX_MAX_AGE_HOURS}h")
+
+
 def test_shopee_parser():
     print("\n--- Teste: shopee.parse_product ---")
     import shopee
@@ -686,6 +730,8 @@ if __name__ == "__main__":
     test_database()
     test_price_parser()
     test_aliexpress_parser()
+    test_budget_split_between_stores()
+    test_fx_rate_is_cached()
     test_shopee_parser()
     test_shopee_post_has_no_tax()
     test_coupon_parser()

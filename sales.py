@@ -11,7 +11,8 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 from aliexpress import get_affiliate_orders
-from database import upsert_affiliate_order, set_usd_brl_rate, get_usd_brl_rate
+from database import (upsert_affiliate_order, set_usd_brl_rate, get_usd_brl_rate,
+                      get_usd_brl_rate_age_hours)
 
 # Documentados pela API; o parâmetro "status" é obrigatório e não aceita lista
 # nem vazio, então consultamos um de cada vez.
@@ -26,7 +27,15 @@ MAX_PAGES_PER_STATUS = 20  # trava de segurança contra paginação mal-formada
 FX_URL = "https://economia.awesomeapi.com.br/last/USD-BRL"
 
 
+# A cotação muda pouco ao longo do dia e o endpoint gratuito devolve 429 se
+# consultado a cada ciclo — busca no máximo de 6 em 6 horas.
+FX_MAX_AGE_HOURS = 6
+
+
 def refresh_usd_brl_rate() -> float:
+    age = get_usd_brl_rate_age_hours()
+    if age is not None and age < FX_MAX_AGE_HOURS:
+        return get_usd_brl_rate()
     try:
         resp = requests.get(FX_URL, timeout=10)
         resp.raise_for_status()

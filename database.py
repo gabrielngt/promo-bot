@@ -677,11 +677,25 @@ def get_usd_brl_rate() -> float:
 
 def set_usd_brl_rate(rate: float):
     with get_connection() as conn:
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES ('usd_brl_rate', %s) "
-            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-            (str(rate),),
-        )
+        for key, value in (("usd_brl_rate", str(rate)),
+                           ("usd_brl_rate_at", _utcnow().isoformat())):
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (%s, %s) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                (key, value),
+            )
+
+
+def get_usd_brl_rate_age_hours() -> float | None:
+    """Há quantas horas a cotação foi atualizada. None = nunca."""
+    with get_connection() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key='usd_brl_rate_at'").fetchone()
+    if not row or not row["value"]:
+        return None
+    try:
+        return (_utcnow() - datetime.fromisoformat(row["value"])).total_seconds() / 3600
+    except ValueError:
+        return None
 
 
 def set_order_excluded(order_id: str, sub_order_id: str, excluded: bool) -> bool:
