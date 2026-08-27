@@ -235,6 +235,7 @@ class SettingsRequest(BaseModel):
     max_posts_per_day:      Annotated[int,   Field(ge=1)]       | None = None
     peripheral_keywords:    list[str] | None = None
     brand_whitelist:        list[str] | None = None
+    shopee_brand_whitelist: list[str] | None = None
     keyword_blacklist:      list[str] | None = None
     monitoring_enabled:     bool | None = None
     filters_enabled:        bool | None = None

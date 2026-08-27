@@ -333,7 +333,10 @@ def check_shopee(settings: dict, max_posts: int, seen_fingerprints: dict) -> int
             continue
         posts_made += check_category(
             category_id=f"shopee:{term}",
-            settings={**settings, "max_posts_per_cycle": max_posts - posts_made},
+            settings={**settings,
+                      "max_posts_per_cycle": max_posts - posts_made,
+                      # marcas da AliExpress não existem no varejo nacional
+                      "brand_whitelist": settings.get("shopee_brand_whitelist", [])},
             posts_so_far=0,
             raw_products_override=raw_products,
             seen_fingerprints=seen_fingerprints,

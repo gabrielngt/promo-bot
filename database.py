@@ -17,6 +17,13 @@ _DEFAULTS = {
     "max_posts_per_day": "20",
     "peripheral_keywords": "",  # populated from config on first init
     "brand_whitelist": "",  # vazio = sem filtro de marca
+    # Marcas da Shopee: a whitelist da AliExpress é de marcas chinesas de
+    # entusiasta que quase não existem no varejo nacional, então a Shopee tem a
+    # sua. Padrão validado contra a API (marcas com volume e nota reais).
+    "shopee_brand_whitelist": "\n".join([
+        "lenovo", "razer", "havit", "aula", "redragon",
+        "fortrek", "knup", "husky", "rise mode",
+    ]),
     "keyword_blacklist": "",  # produtos cujo título contiver qualquer palavra são ignorados
     "monitoring_enabled": "1",  # chave-mestra: desligado = scheduler não busca/posta
     "filters_enabled": "1",  # desligado = ignora keyword/blacklist/marca (listas ficam salvas)
@@ -308,6 +315,12 @@ def get_settings() -> dict:
             for b in s.get("brand_whitelist", "").splitlines()
             if b.strip()
         ],
+        # só nomes de marca (sem o formato "marca:keywords" da AliExpress)
+        "shopee_brand_whitelist": [
+            {"name": b.strip(), "keywords": []}
+            for b in s.get("shopee_brand_whitelist", "").splitlines()
+            if b.strip()
+        ],
         "keyword_blacklist": [
             kw.strip() for kw in s.get("keyword_blacklist", "").splitlines() if kw.strip()
         ],
@@ -321,7 +334,8 @@ def get_settings() -> dict:
 def update_settings(data: dict):
     with get_connection() as conn:
         for k, v in data.items():
-            if k in ("peripheral_keywords", "brand_whitelist", "keyword_blacklist", "coupon_campaigns") and isinstance(v, list):
+            if k in ("peripheral_keywords", "brand_whitelist", "keyword_blacklist",
+                     "coupon_campaigns", "shopee_brand_whitelist") and isinstance(v, list):
                 v = "\n".join(v)
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",

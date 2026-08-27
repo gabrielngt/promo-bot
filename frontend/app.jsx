@@ -118,6 +118,7 @@ const fromApi = (s) => ({
     .join("\n"),
   keywords:   s.peripheral_keywords   ?? [],
   blacklist:  s.keyword_blacklist      ?? [],
+  shopeeBrands: (s.shopee_brand_whitelist ?? []).map(b => typeof b === 'string' ? b : b.name),
   brands:     (s.brand_whitelist ?? []).map(entry =>
     typeof entry === "string" ? parseBrandStr(entry) : entry
   ),
@@ -136,6 +137,7 @@ const toApi = (s) => ({
   coupon_campaigns:       s.campaigns.split("\n").map(l => l.trim()).filter(Boolean),
   peripheral_keywords:    s.keywords,
   keyword_blacklist:      s.blacklist,
+  shopee_brand_whitelist: s.shopeeBrands,
   brand_whitelist:        s.brands.map(serializeBrand),
 });
 
@@ -727,6 +729,21 @@ function Configuracoes({ api, showToast }) {
     }
   };
 
+  const [sbInput, setSbInput] = useState("");
+  const addShopeeBrand = () => {
+    const k = sbInput.trim().toLowerCase();
+    if (!k || draft.shopeeBrands.includes(k)) { setSbInput(""); return; }
+    set({ shopeeBrands: [...draft.shopeeBrands, k] });
+    setSbInput("");
+  };
+  const removeShopeeBrand = (k) => set({ shopeeBrands: draft.shopeeBrands.filter((x) => x !== k) });
+  const onSbKey = (e) => {
+    if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addShopeeBrand(); }
+    else if (e.key === "Backspace" && !sbInput && draft.shopeeBrands.length) {
+      set({ shopeeBrands: draft.shopeeBrands.slice(0, -1) });
+    }
+  };
+
   const addBrand = () => {
     const name = newBrandInput.trim();
     if (!name || draft.brands.some(b => b.name.toLowerCase() === name.toLowerCase())) {
@@ -882,6 +899,36 @@ function Configuracoes({ api, showToast }) {
                 ))}
               </div>
             )}
+          </div>
+
+          <div className="setting-row" style={{ gridTemplateColumns: "1fr", paddingBottom: 4 }}>
+            <div className="setting-meta">
+              <label className="field-label">Marcas da Shopee</label>
+              <div className="field-hint" style={{ marginTop: 2 }}>
+                Whitelist separada da AliExpress — as marcas de lá (akko, mchose, attack shark...)
+                quase não existem no varejo nacional, então a Shopee tem a sua.
+                Deixe vazio para aceitar qualquer marca que passe nos filtros de qualidade.
+              </div>
+            </div>
+            <div className="tags-box">
+              {draft.shopeeBrands.length > 0 ? (
+                <div className="tags-wrap">
+                  {draft.shopeeBrands.map((k) => (
+                    <span className="tag" key={k}>
+                      {k}
+                      <button type="button" onClick={() => removeShopeeBrand(k)} aria-label={"Remover " + k}><Icon.x /></button>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="no-tags">Sem filtro de marca na Shopee.</div>
+              )}
+              <div className="tag-add-row">
+                <input className="input" type="text" placeholder="Digite e pressione Enter"
+                  value={sbInput} onChange={(e) => setSbInput(e.target.value)} onKeyDown={onSbKey} />
+                <button type="button" className="btn btn-secondary" onClick={addShopeeBrand}><Icon.plus /> Add</button>
+              </div>
+            </div>
           </div>
 
           <div className="setting-row" style={{ gridTemplateColumns: "1fr", paddingBottom: 4 }}>
