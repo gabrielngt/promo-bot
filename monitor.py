@@ -1,6 +1,7 @@
-from config import CATEGORIES, PRODUCTS_PER_CATEGORY
+from config import CATEGORIES, PRODUCTS_PER_CATEGORY, SHOPEE_SEARCH_TERMS, SHOPEE_APP_ID, SHOPEE_SECRET
 from aliexpress import get_hot_products, get_products_by_brand, parse_product, get_shipping, get_product_detail, search_products, get_featured_promos, get_featured_promo_products
 from database import upsert_product, can_post, mark_posted, get_settings, get_watchlist, get_recent_min, save_reactions, get_reactions_offset, set_reactions_offset, prune_price_history, record_check_run, save_coupon, get_active_coupons, count_posts_since
+import shopee
 from telegram_bot import post_product, fetch_reaction_updates
 from sales import sync_orders
 
@@ -27,6 +28,9 @@ def _apply_best_coupon(product: dict, settings: dict):
     """Compara o cupom do próprio anúncio com os de campanha (painel + descobertos
     automaticamente) e deixa em product["coupon"] o de maior desconto aplicável.
     Os de campanha são estimativa: a API não expõe elegibilidade por produto."""
+    # cupons colhidos são códigos da AliExpress — não valem em outra loja
+    if product.get("store", "aliexpress") != "aliexpress":
+        return
     own = product.get("coupon")
     best = own if (own and own.get("applicable")) else None
     campaigns = get_active_coupons()
@@ -64,13 +68,18 @@ def _post_with_shipping(product: dict, pct: float, settings: dict) -> int | None
     if not product.get("has_affiliate"):
         print(f"[Monitor] Sem link de afiliado, pulando: {product['title'][:50]}")
         return None
-    shipping = get_shipping(product["product_id"], product.get("sku_id", ""), product["price"])
-    if shipping:
-        product["shipping"] = shipping
-    # melhor cupom (anúncio vs campanhas do painel) e alíquotas para o total
-    # estimado no checkout (preço da API vem sem tributos)
-    _apply_best_coupon(product, settings)
-    product["taxes"] = {"ii": settings["import_tax_rate"], "icms": settings["icms_rate"]}
+    if product.get("store", "aliexpress") == "aliexpress":
+        shipping = get_shipping(product["product_id"], product.get("sku_id", ""), product["price"])
+        if shipping:
+            product["shipping"] = shipping
+        # melhor cupom (anúncio vs campanhas do painel) e alíquotas para o total
+        # estimado no checkout (preço da API vem sem tributos)
+        _apply_best_coupon(product, settings)
+        product["taxes"] = {"ii": settings["import_tax_rate"], "icms": settings["icms_rate"]}
+    else:
+        # vendedor nacional: sem imposto de importação e sem ICMS por dentro —
+        # o preço da API já é o do checkout
+        product["taxes"] = {"ii": 0.0, "icms": 0.0}
     return post_product(product, pct)
 
 # Um produto é postado se (a) caiu abaixo do mínimo histórico (queda real) ou
@@ -166,9 +175,10 @@ def _cheapest_equivalent(product: dict) -> dict:
     return best
 
 
-def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_products_override: list = None, seen_fingerprints: dict = None) -> int:
+def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_products_override: list = None, seen_fingerprints: dict = None, parser=None) -> int:
     if seen_fingerprints is None:
         seen_fingerprints = {}
+    parser = parser or parse_product   # cada loja normaliza o cru do seu jeito
 
     raw_list = raw_products_override if raw_products_override is not None else get_hot_products(category_id, page_size=PRODUCTS_PER_CATEGORY)
 
@@ -176,7 +186,7 @@ def check_category(category_id: str, settings: dict, posts_so_far: int = 0, raw_
     # mantendo o mais barato por grupo. Pula o que já foi postado neste ciclo.
     cheapest: dict[str, dict] = {}
     for raw in raw_list:
-        p = parse_product(raw)
+        p = parser(raw)
         if not p:
             continue
         _harvest_coupon(p)
@@ -307,6 +317,32 @@ def check_watchlist(settings: dict, max_posts: int, seen_fingerprints: dict) -> 
     return posts_made
 
 
+def check_shopee(settings: dict, max_posts: int, seen_fingerprints: dict) -> int:
+    """Varre a Shopee pelos termos de busca configurados. A API dela é por
+    keyword (não tem navegação por categoria), então cada termo é uma chamada."""
+    if not (SHOPEE_APP_ID and SHOPEE_SECRET):
+        return 0
+
+    posts_made = 0
+    print(f"[Monitor] Buscando {len(SHOPEE_SEARCH_TERMS)} termo(s) na Shopee...")
+    for term in SHOPEE_SEARCH_TERMS:
+        if posts_made >= max_posts:
+            break
+        raw_products = shopee.search_products(term, limit=30)
+        if not raw_products:
+            continue
+        posts_made += check_category(
+            category_id=f"shopee:{term}",
+            settings={**settings, "max_posts_per_cycle": max_posts - posts_made},
+            posts_so_far=0,
+            raw_products_override=raw_products,
+            seen_fingerprints=seen_fingerprints,
+            parser=shopee.parse_product,
+        )
+        time.sleep(1)
+    return posts_made
+
+
 _POSITIVE_REACTIONS = {"🔥", "👍", "❤", "❤️", "🎉", "🤩"}
 _NEGATIVE_REACTIONS = {"👎", "🤮", "💩"}
 
@@ -413,6 +449,10 @@ def _do_check():
         posts = check_category(category_id, settings, posts_so_far=total_posts, seen_fingerprints=seen_fingerprints)
         total_posts += posts
         time.sleep(1)
+
+    # Shopee: loja nacional, entra no mesmo canal e divide o mesmo orçamento de posts.
+    if total_posts < max_posts:
+        total_posts += check_shopee(settings, max_posts - total_posts, seen_fingerprints)
 
     # Campanhas oficiais em destaque (Flash Deals, Choice Day...) preenchem o que
     # sobrar — produtos com promoção de evento real, não só desconto de tabela.

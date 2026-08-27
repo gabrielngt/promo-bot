@@ -103,6 +103,62 @@ def test_aliexpress_parser():
     print(f"  ✅ Preço do app: usa R$ {p2['price']:.2f} (site R$ {p2['web_price']:.2f})")
 
 
+def test_shopee_parser():
+    print("\n--- Teste: shopee.parse_product ---")
+    import shopee
+
+    # payload real da API (campos confirmados por sondagem)
+    raw = {
+        "itemId": 15742991199,
+        "productName": "Teclado Mecanico TGT Sherman V3",
+        "priceMin": "89.99", "priceMax": "89.99",
+        "priceDiscountRate": 50,
+        "commissionRate": "0.03", "commission": "2.6997",
+        "sales": 1499, "ratingStar": "4.9",
+        "imageUrl": "https://cf.shopee.com.br/file/abc",
+        "offerLink": "https://s.shopee.com.br/ABC123",
+        "productLink": "https://shopee.com.br/product/1/2",
+        "shopName": "Loja Teste",
+    }
+    p = shopee.parse_product(raw)
+    assert p["store"] == "shopee"
+    assert p["product_id"] == "15742991199"
+    assert abs(p["price"] - 89.99) < 0.01
+    # commissionRate e FRACAO: 0.03 = 3% (nao 0.03%)
+    assert abs(p["commission_pct"] - 3.0) < 0.01, "0.03 deve virar 3%"
+    assert abs(p["commission_brl"] - 2.6997) < 0.01
+    # desconto de 50% reconstroi o preco "de"
+    assert abs(p["original_price"] - 179.98) < 0.01
+    assert p["has_affiliate"] is True and p["link"].startswith("https://s.shopee.com.br/")
+    assert p["rating"] == 4.9 and p["sales"] == 1499
+    print(f"  OK R$ {p['price']:.2f} (de R$ {p['original_price']:.2f}) | comissao {p['commission_pct']}%")
+
+    # sem desconto: original == preco (nao inventa "de")
+    p2 = shopee.parse_product({**raw, "priceDiscountRate": 0})
+    assert abs(p2["original_price"] - p2["price"]) < 0.01
+    print("  OK sem desconto: nao inventa preco original")
+
+    # preco invalido -> None
+    assert shopee.parse_product({**raw, "priceMin": "0"}) is None
+    print("  OK preco zero: None")
+
+
+def test_shopee_post_has_no_tax():
+    print("\n--- Teste: post da Shopee (loja nacional, sem imposto) ---")
+    from telegram_bot import _format_message
+    p = {
+        "store": "shopee", "title": "Teclado Teste", "price": 89.99,
+        "original_price": 179.98, "rating": 4.9, "sales": 1499,
+        "link": "https://s.shopee.com.br/ABC", "taxes": {"ii": 0.0, "icms": 0.0},
+    }
+    msg = _format_message(p, 50)
+    assert "SHOPEE" in msg.splitlines()[0], "cabecalho deve identificar a loja"
+    assert "Comprar na Shopee" in msg
+    assert "imposto" not in msg.lower(), "produto nacional nao mostra imposto"
+    assert "Total estimado no checkout" not in msg
+    print("  OK selo Shopee, CTA correto, sem linha de imposto")
+
+
 def test_coupon_parser():
     print("\n--- Teste: aliexpress._parse_coupon ---")
     from aliexpress import _parse_coupon
@@ -630,6 +686,8 @@ if __name__ == "__main__":
     test_database()
     test_price_parser()
     test_aliexpress_parser()
+    test_shopee_parser()
+    test_shopee_post_has_no_tax()
     test_coupon_parser()
     test_checkout_total()
     test_checkout_price_target()

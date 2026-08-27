@@ -10,7 +10,8 @@ Bot que monitora a **API de afiliados da AliExpress** e publica automaticamente 
 
 | Recurso | O que faz |
 |---|---|
-| 🛒 **Descoberta de ofertas** | Busca produtos em alta por **categoria** e por **marca** na AliExpress |
+| 🛒 **Descoberta de ofertas** | Busca produtos em alta por **categoria** e por **marca** na AliExpress, e por **keyword** na Shopee |
+| 🏪 **Duas lojas** | AliExpress (importado) e Shopee (nacional) no mesmo canal, com selo identificando a origem |
 | 📉 **Detecção de promoção** | Posta quando o preço cai abaixo do mínimo histórico **ou** quando há desconto forte sobre o preço original |
 | 🎟️ **Cupons** | Extrai o cupom do anúncio (fixo ou percentual), aplica **cupons de campanha** do painel e calcula o **preço final** |
 | 🚚 **Frete + prazo** | Busca o frete real para o Brasil e mostra o prazo de entrega |
@@ -108,6 +109,8 @@ python main.py
 
 Variáveis principais (ver `.env.example`): `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHANNEL_ID`, `ADMIN_API_KEY`, `ALIEXPRESS_APP_KEY`, `ALIEXPRESS_APP_SECRET`, `ALIEXPRESS_TRACKING_ID`.
 
+A Shopee é **opcional**: com `SHOPEE_APP_ID` e `SHOPEE_SECRET` preenchidos, ela entra como segunda fonte; sem eles, o ciclo simplesmente pula essa etapa.
+
 A API sempre sobe; o scheduler só inicia se todas as credenciais estiverem presentes.
 
 ---
@@ -126,6 +129,7 @@ pytest
 main.py            Entry point: sobe a API e (se houver credenciais) o scheduler
 monitor.py         Lógica de monitoramento: dedup, filtros, detecção de oferta
 aliexpress.py      Cliente da API (assinatura MD5, parser, link/frete/cupom/pedidos)
+shopee.py          Cliente da Open API da Shopee (GraphQL, assinatura SHA256)
 telegram_bot.py    Formatação e publicação das mensagens no canal
 sales.py           Sincroniza pedidos/comissão de afiliado com o banco
 database.py        Camada Postgres/Supabase (produtos, histórico, settings, vendas)
@@ -143,6 +147,7 @@ test_bot.py        Testes (pytest)
 - **Imposto no preço** — o preço retornado pela API vem **sem** os tributos que o AliExpress soma no checkout (Remessa Conforme). O post mostra o **total estimado**: `(preço + frete) × (1 + II) ÷ (1 − ICMS)`, com alíquotas configuráveis no painel — padrão II 0% (zerado por MP em mai/2026 para compras ≤ US$50) e ICMS 17% "por dentro" (17–20% conforme o estado; validado contra checkout real).
 - **Preço do app** — quando a API manda `target_app_sale_price` menor que o preço do site, o bot usa o do app (o link de afiliado abre o app e é esse o valor do checkout) e indica no post.
 - **Cupons de campanha** — a API não lista cupons ativos (nem de loja); só o `promo_code_info` de cada anúncio. Como os códigos de campanha são globais, o bot **colhe automaticamente** os cupons fixos vistos em qualquer anúncio escaneado e os reaplica nos demais posts por 72h. O painel tem um formulário para cupons **manuais** (código, gasto mínimo, desconto e **validade opcional** — vencido, sai da aplicação sozinho). Cupom com desconto ≥ gasto mínimo é descartado: seria "gaste X, ganhe X" (produto grátis), sempre artefato de parse do texto.
+- **Shopee** — Open API em GraphQL, autenticada por assinatura SHA256 (`AppId + Timestamp + Payload + Secret`). Três diferenças confirmadas contra a API real: o `offerLink` **já vem como link de afiliado** (não precisa de segunda chamada para gerar link, como na AliExpress); `commissionRate` é **fração** (`0.43` = 43%) e o campo `commission` já vem em reais; e `sortType: 2` (volume de vendas) é obrigatório na prática — o default devolve muito anúncio novo com 0 vendas e busca irrelevante. Como o vendedor é nacional, não há cálculo de imposto nem consulta de frete: o preço da API já é o do checkout.
 - **Vendas** — `sales.py` sincroniza `aliexpress.affiliate.order.listbyindex` a cada ciclo (janela móvel de 60 dias, dois status documentados: pago e confirmado) e grava em `affiliate_orders`. O painel mostra vendas/valor/comissão do período com gráfico diário. Dois detalhes do formato, descobertos contra pedidos reais e não documentados: os valores vêm em **centavos** como inteiro (`3792` = 37,92) e a moeda é a de **liquidação da conta de afiliado** (USD), não a do anúncio. O painel converte para BRL com a cotação do dia (atualizada a cada sync via AwesomeAPI, com fallback ao último valor conhecido). **Compra própria não gera comissão** ([regra do programa](https://portals.aliexpress.com/help.htm?page=help_center)) mas a API a devolve junto das vendas reais, sem campo que a identifique — por isso o painel tem um botão para excluir o pedido dos totais. O `paid_amount` também é a **base de comissão** (valor do produto antes dos cupons do comprador), não o que ele pagou — validado num pedido real: base R$ 197,85 vs R$ 153 pagos. A coluna do painel se chama "Base" por isso, e a coluna `raw_json` guarda o payload completo para investigar se existe algum campo não documentado que sirva de discriminador. ⚠️ O formato de `start_time`/`end_time` e o campo de paginação da resposta **não são fixados pela documentação oficial** — o código assume um formato comum às APIs Alibaba; rode `python diagnose_api.py` no servidor pra confirmar contra a resposta real antes de confiar em contas com muitos pedidos (paginação além da 1ª página é best-effort).
 - **Dedup por fingerprint de título** — o mesmo produto aparece de vários sellers; agrupar por palavras normalizadas e manter o mais barato evita spam de itens repetidos.
 - **Enriquecimento sob demanda** — frete e cupom são buscados **só na hora de postar** (1 chamada por produto publicado), economizando requisições.

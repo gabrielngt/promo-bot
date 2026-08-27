@@ -23,8 +23,12 @@ def _format_message(product: dict, drop_pct: float) -> str:
     title = html.escape(product["title"][:150])  # caption Telegram: limite 1024 chars
     link = html.escape(product["link"])
 
+    # o canal recebe as duas lojas; o selo evita confusão de prazo/frete
+    store = product.get("store", "aliexpress")
+    header = "🛒 <b>PROMOÇÃO SHOPEE</b>" if store == "shopee" else "🔥 <b>PROMOÇÃO ALIEXPRESS</b>"
+
     lines = [
-        "🔥 <b>PROMOÇÃO ALIEXPRESS</b>",
+        header,
         "",
         f"<b>{title}</b>",
         "",
@@ -90,9 +94,11 @@ def _format_message(product: dict, drop_pct: float) -> str:
     if social:
         lines += ["", "  |  ".join(social)]
 
+    loja = "Shopee" if store == "shopee" else "AliExpress"
     lines += [
         "",
-        f'👉 <a href="{link}">Comprar no AliExpress</a>',
+        f'👉 <a href="{link}">Comprar na {loja}</a>' if store == "shopee"
+        else f'👉 <a href="{link}">Comprar no {loja}</a>',
     ]
 
     return "\n".join(lines)

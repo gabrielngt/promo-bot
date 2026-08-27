@@ -11,6 +11,9 @@ ALIEXPRESS_APP_KEY = os.getenv("ALIEXPRESS_APP_KEY")
 ALIEXPRESS_APP_SECRET = os.getenv("ALIEXPRESS_APP_SECRET")
 ALIEXPRESS_TRACKING_ID = os.getenv("ALIEXPRESS_TRACKING_ID")
 
+SHOPEE_APP_ID = os.getenv("SHOPEE_APP_ID")
+SHOPEE_SECRET = os.getenv("SHOPEE_SECRET")
+
 CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", 60))
 PRICE_DROP_THRESHOLD = float(os.getenv("PRICE_DROP_THRESHOLD", 0.15))
 MIN_REPOST_DAYS = int(os.getenv("MIN_REPOST_DAYS", 3))
@@ -54,4 +57,19 @@ PERIPHERAL_KEYWORDS = [
     "cabo hdmi", "hdmi cable", "cabo displayport", "hdmi线",
     # SSD / HD externo
     "ssd", "hd externo", "pendrive", "flash drive", "固态硬盘", "u盘",
+]
+
+
+# A Shopee busca por keyword (não tem navegação por categoria como a AliExpress),
+# então estes são os termos varridos por ciclo. Em português: loja brasileira.
+SHOPEE_SEARCH_TERMS = [
+    "teclado mecanico",
+    "mouse gamer",
+    "headset gamer",
+    "mousepad",
+    "monitor gamer",
+    "ssd nvme",
+    "webcam",
+    "controle gamer",
+    "microfone condensador",
 ]
