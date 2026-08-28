@@ -55,6 +55,12 @@ const Icon = {
       <path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/>
     </svg>
   ),
+  external: (p) => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
+      <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>
+      <path d="M15 3h6v6M10 14L21 3"/>
+    </svg>
+  ),
   eye: (p) => (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}>
       <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/>
@@ -1056,6 +1062,29 @@ function Configuracoes({ api, showToast }) {
   );
 }
 
+/* Painéis oficiais de cada programa — saldo, pagamentos e regras que a API não expõe. */
+const AFFILIATE_PANELS = [
+  { name: "AliExpress",    url: "https://portals.aliexpress.com/",            color: "#ff4747" },
+  { name: "Shopee",        url: "https://affiliate.shopee.com.br/",           color: "#ee4d2d" },
+  { name: "Mercado Livre", url: "https://www.mercadolivre.com.br/afiliados/", color: "#ffe600" },
+];
+
+function AffiliatePanelLinks() {
+  return (
+    <div className="panel-links">
+      <span className="panel-links-label">Painéis de afiliado</span>
+      {AFFILIATE_PANELS.map((p) => (
+        <a key={p.name} className="card panel-link" href={p.url}
+           target="_blank" rel="noopener noreferrer">
+          <span className="panel-dot" style={{ background: p.color }}></span>
+          {p.name}
+          <Icon.external className="panel-link-arrow" />
+        </a>
+      ))}
+    </div>
+  );
+}
+
 /* ── Vendas ── */
 const SALES_PERIODS = [7, 30, 90];
 
@@ -1190,6 +1219,8 @@ function Vendas({ api, showToast }) {
         <div className="page-title">Vendas</div>
         <div className="page-desc">Pedidos e comissão rastreados pela API de afiliados da AliExpress. Sincroniza a cada ciclo do bot.</div>
       </div>
+
+      <AffiliatePanelLinks />
 
       <div className="period-toggle">
         {SALES_PERIODS.map((p) => (

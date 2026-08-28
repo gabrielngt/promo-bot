@@ -397,6 +397,23 @@
     .coupon-row { grid-template-columns: 1fr auto; row-gap: 4px; }
   }
 
+  /* Painéis de afiliado */
+  .panel-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 20px; }
+  .panel-links-label {
+    font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--muted-2); margin-right: 4px;
+  }
+  .panel-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 12px; text-decoration: none;
+    color: var(--muted); font-size: 13px; font-weight: 500; letter-spacing: -0.01em;
+    transition: color .14s ease, background .14s ease, border-color .14s ease;
+  }
+  .panel-link:hover { color: var(--text); background: var(--card-2); border-color: var(--border); }
+  .panel-dot { width: 7px; height: 7px; border-radius: 99px; flex: none; }
+  .panel-link-arrow { color: var(--muted-2); }
+  .panel-link:hover .panel-link-arrow { color: var(--muted); }
+
   /* Vendas */
   .period-toggle { display: flex; gap: 8px; margin-bottom: 20px; }
   .period-btn {
