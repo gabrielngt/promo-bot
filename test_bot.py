@@ -103,24 +103,129 @@ def test_aliexpress_parser():
     print(f"  ✅ Preço do app: usa R$ {p2['price']:.2f} (site R$ {p2['web_price']:.2f})")
 
 
+def _fake_deal_feed(n):
+    """n produtos distintos que passam em todos os filtros e sao deals obvios.
+    Titulos sem palavras em comum: o dedup por similaridade nao pode funde-los."""
+    return [{"i": i} for i in range(n)]
+
+
+def _fake_parse(raw):
+    i = raw["i"]
+    return {
+        "store": "aliexpress", "product_id": f"fake{i}", "has_affiliate": True,
+        "sku_id": "", "title": "teclado " + " ".join(f"w{i}x{k}" for k in range(6)),
+        "price": 100.0 + i, "web_price": 100.0 + i, "original_price": 300.0 + i,
+        "discount_pct": 60.0, "coupon": None, "link": "http://exemplo",
+        "image_url": "", "rating": 4.9, "sales": 500,
+    }
+
+
+def _monitor_sem_rede(monkeypatch_alvo):
+    """Substitui banco/rede em monitor.py e devolve a lista de posts feitos."""
+    m = monkeypatch_alvo
+    postados = []
+    m.parse_product = _fake_parse
+    m.get_recent_min = lambda pid, days=30: None
+    m.upsert_product = lambda *a, **k: {"is_new": True}
+    m.can_post = lambda pid, price=0.0: True
+    m.mark_posted = lambda pid, price=0.0, message_id=None: postados.append(pid)
+    m._post_with_shipping = lambda p, pct, s: len(postados) + 1
+    m.time.sleep = lambda s: None
+    return postados
+
+
+_SETTINGS_BASE = {
+    "max_posts_per_cycle": 5, "max_posts_per_day": 20,
+    "peripheral_keywords": ["teclado"], "keyword_blacklist": [], "brand_whitelist": [],
+    "price_drop_threshold": 0.05, "cold_start_threshold": 0.30,
+    "import_tax_rate": 0.0, "icms_rate": 0.17,
+}
+
+
 def test_budget_split_between_stores():
     print("\n--- Teste: orcamento dividido entre as lojas ---")
-    # sem reserva, as marcas da AliExpress esgotavam o ciclo e a Shopee nunca rodava
     for max_posts, esperado_shopee in [(2, 1), (3, 1), (5, 2), (10, 5), (1, 1)]:
         shopee_budget = max(1, max_posts // 2)
         ali_budget = max_posts - shopee_budget
         assert shopee_budget == esperado_shopee, (max_posts, shopee_budget)
-        assert shopee_budget >= 1, "Shopee sempre tem ao menos 1 vaga"
         assert ali_budget >= 0
         print(f"  orcamento {max_posts:>2} -> AliExpress {ali_budget}, Shopee {shopee_budget}")
 
-    # cenario real do log: 3 deals de marca com orcamento 2
-    max_posts = 2
-    shopee_budget = max(1, max_posts // 2); ali_budget = max_posts - shopee_budget
-    posts = min(3, ali_budget)          # marcas limitadas ao orcamento delas
-    assert posts == 1, "marcas nao podem mais consumir o ciclo inteiro"
-    assert max_posts - posts >= shopee_budget - 1
-    print(f"  caso do log: marcas ficam com {posts}, sobra {max_posts-posts} para a Shopee")
+    # Regressao: a reserva so vale se o orcamento CHEGAR ao check_category, que
+    # le settings["max_posts_per_cycle"]. Antes, uma categoria sozinha postava o
+    # ciclo inteiro e a Shopee (que roda depois) nunca tinha vaga.
+    import monitor
+    originais = {k: getattr(monitor, k) for k in
+                 ("parse_product", "get_recent_min", "upsert_product", "can_post",
+                  "mark_posted", "_post_with_shipping")}
+    sleep_orig = monitor.time.sleep
+    try:
+        _monitor_sem_rede(monitor)
+        max_posts = 5
+        shopee_budget = max(1, max_posts // 2)
+        ali_budget = max_posts - shopee_budget
+        ali_settings = {**_SETTINGS_BASE, "max_posts_per_cycle": ali_budget}
+        n = monitor.check_category("44", ali_settings, posts_so_far=0,
+                                   raw_products_override=_fake_deal_feed(10),
+                                   seen_fingerprints={})
+        assert n <= ali_budget, f"categoria postou {n} com orcamento {ali_budget}"
+        assert max_posts - n >= shopee_budget, "reserva da Shopee foi consumida"
+        print(f"  OK 10 deals, orcamento AliExpress {ali_budget} -> postou {n}, "
+              f"sobrou {max_posts - n} para a Shopee")
+    finally:
+        for k, v in originais.items():
+            setattr(monitor, k, v)
+        monitor.time.sleep = sleep_orig
+
+
+def test_cycle_budget_reaches_check_category():
+    """O bug real nao estava na aritmetica do orcamento — estava em _do_check
+    passar `settings` cru para check_category, que le max_posts_per_cycle e
+    ignorava os budgets calculados. Aqui capturamos o teto que cada etapa
+    recebe de verdade."""
+    print("\n--- Teste: orcamento chega ate quem decide (_do_check) ---")
+    import monitor
+
+    recebidos = []
+    originais = {k: getattr(monitor, k) for k in
+                 ("get_settings", "count_posts_since", "record_check_run",
+                  "check_category", "check_watchlist", "get_featured_promos",
+                  "poll_reactions", "prune_price_history", "sync_orders")}
+    sleep_orig = monitor.time.sleep
+    try:
+        cap, posts_24h, por_ciclo = 20, 18, 5
+        monitor.get_settings = lambda: {**_SETTINGS_BASE,
+                                        "max_posts_per_cycle": por_ciclo,
+                                        "max_posts_per_day": cap,
+                                        "monitoring_enabled": True,
+                                        "filters_enabled": True}
+        monitor.count_posts_since = lambda hours=24: posts_24h
+        monitor.record_check_run = lambda: None
+        monitor.check_watchlist = lambda st, mx, seen: 0
+        monitor.get_featured_promos = lambda: []
+        monitor.poll_reactions = lambda: None
+        monitor.prune_price_history = lambda *a, **k: 0
+        monitor.sync_orders = lambda: 0
+        monitor.time.sleep = lambda s: None
+
+        def espiao(category_id, settings, posts_so_far=0, **kw):
+            recebidos.append((category_id, settings["max_posts_per_cycle"] - posts_so_far))
+            return 0
+        monitor.check_category = espiao
+
+        monitor._do_check()
+
+        max_ciclo = min(por_ciclo, cap - posts_24h)   # 2
+        assert recebidos, "nenhuma categoria foi consultada"
+        for category_id, teto in recebidos:
+            assert teto <= max_ciclo, (
+                f"{category_id} recebeu teto {teto}, acima do permitido {max_ciclo}")
+        print(f"  OK com {posts_24h}/{cap} em 24h, o ciclo pode postar {max_ciclo}; "
+              f"maior teto entregue: {max(t for _, t in recebidos)}")
+    finally:
+        for k, v in originais.items():
+            setattr(monitor, k, v)
+        monitor.time.sleep = sleep_orig
 
 
 def test_fx_rate_is_cached():
@@ -396,6 +501,28 @@ def test_daily_post_cap():
         restante = max(0, cap - posts_24h)
         assert min(per_cycle, restante) == esperado
     print("  ✅ Teto corta o ciclo: 18/20 → 2 posts, 20/20 e 72/20 → 0")
+
+    # Regressao: o teto so segura se chegar ao check_category. Antes, com 18/20
+    # ja postados, uma categoria ainda postava max_posts_per_cycle (5) = 23/20.
+    import monitor
+    originais = {k: getattr(monitor, k) for k in
+                 ("parse_product", "get_recent_min", "upsert_product", "can_post",
+                  "mark_posted", "_post_with_shipping")}
+    sleep_orig = monitor.time.sleep
+    try:
+        _monitor_sem_rede(monitor)
+        posts_24h, cap = 18, 20
+        max_posts = min(_SETTINGS_BASE["max_posts_per_cycle"], cap - posts_24h)
+        n = monitor.check_category(
+            "44", {**_SETTINGS_BASE, "max_posts_per_cycle": max_posts},
+            posts_so_far=0, raw_products_override=_fake_deal_feed(10),
+            seen_fingerprints={})
+        assert posts_24h + n <= cap, f"{posts_24h}+{n} passou do teto {cap}"
+        print(f"  ✅ Com {posts_24h}/{cap} e 10 deals na fila, a categoria postou {n}")
+    finally:
+        for k, v in originais.items():
+            setattr(monitor, k, v)
+        monitor.time.sleep = sleep_orig
 
 
 def test_order_parser():
@@ -731,6 +858,7 @@ if __name__ == "__main__":
     test_price_parser()
     test_aliexpress_parser()
     test_budget_split_between_stores()
+    test_cycle_budget_reaches_check_category()
     test_fx_rate_is_cached()
     test_shopee_parser()
     test_shopee_post_has_no_tax()

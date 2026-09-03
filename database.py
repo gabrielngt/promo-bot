@@ -693,8 +693,10 @@ def get_usd_brl_rate_age_hours() -> float | None:
     if not row or not row["value"]:
         return None
     try:
+        # TypeError: valor gravado por versão antiga vinha sem timezone e não
+        # pode ser subtraído de um datetime aware
         return (_utcnow() - datetime.fromisoformat(row["value"])).total_seconds() / 3600
-    except ValueError:
+    except (ValueError, TypeError):
         return None
 
 

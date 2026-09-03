@@ -420,6 +420,12 @@ def _do_check():
     shopee_budget = max(1, max_posts // 2) if shopee_ativa else 0
     ali_budget = max_posts - shopee_budget
 
+    # check_category lê o teto de settings["max_posts_per_cycle"], não dos budgets
+    # acima — sem sobrescrever, uma categoria sozinha posta o ciclo inteiro,
+    # furando a reserva da Shopee E o teto diário.
+    ali_settings = {**settings, "max_posts_per_cycle": ali_budget}
+    cycle_settings = {**settings, "max_posts_per_cycle": max_posts}
+
     total_posts = 0
     seen_fingerprints: dict = {}  # só fingerprints já POSTADOS neste ciclo
 
@@ -460,7 +466,7 @@ def _do_check():
     for category_id in CATEGORIES:
         if total_posts >= ali_budget:
             break
-        posts = check_category(category_id, settings, posts_so_far=total_posts, seen_fingerprints=seen_fingerprints)
+        posts = check_category(category_id, ali_settings, posts_so_far=total_posts, seen_fingerprints=seen_fingerprints)
         total_posts += posts
         time.sleep(1)
 
@@ -484,7 +490,7 @@ def _do_check():
             if raw_products:
                 total_posts += check_category(
                     category_id=f"promo:{promo_name}",
-                    settings=settings,
+                    settings=cycle_settings,
                     posts_so_far=total_posts,
                     raw_products_override=raw_products,
                     seen_fingerprints=seen_fingerprints,
